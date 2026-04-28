@@ -17,13 +17,19 @@
               :aria-checked="form.api_protocol === option.value"
               @click="form.api_protocol = option.value"
             >
+              <span v-if="form.api_protocol === option.value" class="provider-check">
+                <el-icon><Check /></el-icon>
+              </span>
               <span class="provider-icon">
                 <el-icon><component :is="option.icon" /></el-icon>
               </span>
               <span class="provider-copy">
                 <span class="provider-name">{{ option.label }}</span>
                 <span class="provider-desc">{{ option.description }}</span>
-                <span class="provider-endpoint mono">{{ option.endpoint }}</span>
+                <span class="provider-meta">
+                  <span class="provider-pill">{{ option.auth }}</span>
+                  <span class="provider-endpoint mono">{{ endpointLabel(option.value) }}</span>
+                </span>
               </span>
             </button>
           </div>
@@ -142,21 +148,45 @@
         <el-form-item label="单点时长（秒）" prop="matrix_duration_sec">
           <el-input-number v-model="form.matrix_duration_sec" :min="1" :max="86400" controls-position="right" />
         </el-form-item>
+        <div class="matrix-preview full-row">
+          <span>预计测试点</span>
+          <strong>{{ matrixPointCount }}</strong>
+          <span>组</span>
+        </div>
       </div>
     </div>
 
     <div class="form-actions">
-      <el-button type="primary" :icon="VideoPlay" :loading="submitting" @click="submit">
-        启动测试
-      </el-button>
-      <el-button :icon="RefreshLeft" @click="reset">恢复默认</el-button>
+      <div class="action-summary">
+        <strong>{{ protocolText }} / {{ form.model || '未填写模型' }}</strong>
+        <span>{{ form.matrix_mode ? `矩阵 ${matrixPointCount} 组` : `${form.concurrency} 并发 · ${form.duration_sec}s` }}</span>
+      </div>
+      <div class="action-buttons">
+        <el-popover placement="top-end" trigger="click" :width="360">
+          <template #reference>
+            <el-button :icon="Document">参数预览</el-button>
+          </template>
+          <div class="config-preview">
+            <div><span>协议</span><strong>{{ protocolText }}</strong></div>
+            <div><span>认证</span><strong>{{ selectedProtocol.auth }}</strong></div>
+            <div><span>Base URL</span><code>{{ form.base_url }}</code></div>
+            <div><span>Endpoint</span><code>{{ form.endpoint }}</code></div>
+            <div><span>流式</span><strong>{{ form.enable_stream ? '开启' : '关闭' }}</strong></div>
+            <div><span>负载</span><strong>{{ form.matrix_mode ? `${matrixPointCount} 组矩阵` : `${form.concurrency} 并发 / ${form.duration_sec}s` }}</strong></div>
+          </div>
+        </el-popover>
+        <el-button :icon="RefreshLeft" @click="reset">恢复默认</el-button>
+        <el-button type="primary" :icon="VideoPlay" :loading="submitting" @click="submit">
+          启动测试
+        </el-button>
+      </div>
     </div>
   </el-form>
 </template>
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ChatLineRound, Connection, Cpu, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
+import { ChatLineRound, Check, Connection, Cpu, Document, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
 
 const emit = defineEmits(['submit'])
 
@@ -240,6 +270,7 @@ const protocolOptions = [
     label: 'OpenAI-compatible',
     description: '适配 GLM、Qwen、DeepSeek、OpenAI 兼容接口',
     endpoint: '/chat/completions',
+    auth: 'Authorization: Bearer',
     icon: Connection
   },
   {
@@ -247,6 +278,7 @@ const protocolOptions = [
     label: 'Anthropic Messages',
     description: '使用 x-api-key 和 anthropic-version 请求头',
     endpoint: '/messages',
+    auth: 'x-api-key',
     icon: ChatLineRound
   },
   {
@@ -254,6 +286,7 @@ const protocolOptions = [
     label: 'Gemini API',
     description: '使用 x-goog-api-key 和 generateContent 协议',
     endpoint: '/models/{model}:generateContent',
+    auth: 'x-goog-api-key',
     icon: Cpu
   }
 ]
@@ -277,6 +310,16 @@ const apiKeyLabel = computed(() => {
 const modelPlaceholder = computed(() => (
   protocolDefaults[form.api_protocol]?.model || defaults.model
 ))
+const selectedProtocol = computed(() => (
+  protocolOptions.find((item) => item.value === form.api_protocol) || protocolOptions[0]
+))
+const protocolText = computed(() => selectedProtocol.value.label)
+const matrixPointCount = computed(() => {
+  if (!form.matrix_mode) return 1
+  const inputs = parseList(form.input_tokens_list)
+  const concurrency = parseList(form.concurrency_list)
+  return Math.max(0, inputs.length * concurrency.length)
+})
 
 function isKnownBaseUrl(value) {
   return domainOptions.some((item) => item.value === value)
@@ -291,6 +334,17 @@ function isKnownEndpoint(value) {
 function endpointFor(protocol, enableStream = form.enable_stream) {
   const item = protocolDefaults[protocol] || protocolDefaults.openai
   return enableStream ? item.stream_endpoint : item.non_stream_endpoint
+}
+
+function endpointLabel(protocol) {
+  return endpointFor(protocol, protocol === form.api_protocol ? form.enable_stream : true)
+}
+
+function parseList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 watch(
@@ -385,6 +439,8 @@ function reset() {
   bottom: 0;
   z-index: 10;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
   margin-top: 12px;
   padding: 14px 16px;
@@ -393,6 +449,27 @@ function reset() {
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(10px);
+}
+
+.action-summary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.action-summary span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 :deep(.el-input-number) {
@@ -407,6 +484,7 @@ function reset() {
 }
 
 .provider-card {
+  position: relative;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 12px;
@@ -421,6 +499,20 @@ function reset() {
     border-color 180ms ease,
     box-shadow 180ms ease,
     transform 180ms ease;
+}
+
+.provider-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 14px;
 }
 
 .provider-card:hover {
@@ -476,7 +568,6 @@ function reset() {
 }
 
 .provider-endpoint {
-  margin-top: auto;
   overflow: hidden;
   color: #475569;
   font-size: 11px;
@@ -485,9 +576,82 @@ function reset() {
   white-space: nowrap;
 }
 
+.provider-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.provider-pill {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.matrix-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px dashed #93b4e8;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #64748b;
+}
+
+.matrix-preview strong {
+  color: #2563eb;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 18px;
+}
+
+.config-preview {
+  display: grid;
+  gap: 9px;
+}
+
+.config-preview > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.config-preview span {
+  color: #64748b;
+}
+
+.config-preview code,
+.config-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1e293b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 1100px) {
   .provider-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .form-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .action-buttons,
+  .action-buttons .el-button {
+    width: 100%;
   }
 }
 </style>

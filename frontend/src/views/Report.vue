@@ -6,11 +6,23 @@
         <div class="toolbar">
           <el-button :icon="Monitor" @click="router.push(`/tests/${id}/run`)">运行页</el-button>
           <el-button :icon="CopyDocument" @click="copyRerun">复制配置</el-button>
-          <el-button v-if="hasFile('summary')" :icon="Download" @click="openDownload('summary')">Summary</el-button>
-          <el-button v-if="hasFile('details')" :icon="Download" @click="openDownload('details')">Details</el-button>
-          <el-button v-if="hasFile('markdown')" :icon="Download" @click="openDownload('markdown')">Markdown</el-button>
-          <el-button v-if="hasFile('matrix_csv')" :icon="Download" @click="openDownload('matrix_csv')">CSV</el-button>
-          <el-button v-if="hasFile('html')" :icon="Download" type="primary" @click="openDownload('html')">HTML</el-button>
+          <el-dropdown trigger="click" :disabled="!downloadItems.length" @command="openDownload">
+            <el-button type="primary" :icon="Download">
+              导出报告
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="item in downloadItems"
+                  :key="item.kind"
+                  :command="item.kind"
+                >
+                  {{ item.label }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
       <div class="section-body">
@@ -149,7 +161,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CopyDocument, Download, Monitor, Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, CopyDocument, Download, Monitor, Refresh } from '@element-plus/icons-vue'
 import ChartPanel from '../components/ChartPanel.vue'
 import MetricCards from '../components/MetricCards.vue'
 import MetricsTable from '../components/MetricsTable.vue'
@@ -180,6 +192,13 @@ const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
 const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
+const downloadItems = computed(() => [
+  { kind: 'html', label: 'HTML 可视化报告' },
+  { kind: 'markdown', label: 'Markdown 报告' },
+  { kind: 'summary', label: 'Summary JSON' },
+  { kind: 'details', label: 'Details JSONL' },
+  { kind: 'matrix_csv', label: 'Matrix CSV' }
+].filter((item) => hasFile(item.kind)))
 
 const metricItems = computed(() => [
   { label: '总请求', value: number(results.value.total_requests), sub: `成功 ${number(results.value.successful_requests)}`, color: '#2563eb' },

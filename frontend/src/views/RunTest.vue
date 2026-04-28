@@ -14,6 +14,7 @@
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">任务配置</h2>
+          <el-tag :type="socketTagType" effect="plain">{{ socketStatusText }}</el-tag>
         </div>
         <div class="section-body">
           <el-descriptions :column="2" border>
@@ -60,6 +61,7 @@ const status = ref('queued')
 const logs = ref([])
 const loading = ref(false)
 const stopping = ref(false)
+const socketStatus = ref('connecting')
 let socket
 let pollTimer
 let pingTimer
@@ -111,7 +113,11 @@ async function loadTask() {
 }
 
 function connectSocket() {
+  socketStatus.value = 'connecting'
   socket = createProgressSocket(props.id)
+  socket.onopen = () => {
+    socketStatus.value = 'connected'
+  }
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
     if (message.type === 'progress') {
@@ -129,7 +135,13 @@ function connectSocket() {
     }
   }
   socket.onerror = () => {
+    socketStatus.value = 'fallback'
     ElMessage.warning('实时连接异常，已启用状态轮询')
+  }
+  socket.onclose = () => {
+    if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(status.value)) {
+      socketStatus.value = 'fallback'
+    }
   }
   pingTimer = window.setInterval(() => {
     if (socket?.readyState === WebSocket.OPEN) {
@@ -197,6 +209,18 @@ function protocolText(protocol) {
   if (protocol === 'gemini') return 'Gemini API'
   return 'OpenAI-compatible'
 }
+
+const socketStatusText = computed(() => {
+  if (socketStatus.value === 'connected') return '实时连接中'
+  if (socketStatus.value === 'fallback') return '轮询更新'
+  return '连接中'
+})
+
+const socketTagType = computed(() => {
+  if (socketStatus.value === 'connected') return 'success'
+  if (socketStatus.value === 'fallback') return 'warning'
+  return 'info'
+})
 
 onMounted(async () => {
   await loadTask()

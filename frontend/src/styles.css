@@ -15,6 +15,7 @@
   --app-muted: #64748b;
   --app-panel: #ffffff;
   --app-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  --app-focus: 0 0 0 3px rgba(37, 99, 235, 0.22);
 }
 
 * {
@@ -37,15 +38,18 @@ button,
 }
 
 .app-shell {
+  height: 100vh;
   min-height: 100vh;
   background:
     linear-gradient(90deg, rgba(37, 99, 235, 0.04) 0, rgba(37, 99, 235, 0) 360px),
     #f8fafc;
+  overflow: hidden;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   border-right: 1px solid var(--app-border);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
@@ -106,6 +110,11 @@ button,
   background: #f8fbff;
 }
 
+.info-block:nth-child(1),
+.info-block:nth-child(2) {
+  flex: 0 0 auto;
+}
+
 .info-title {
   margin-bottom: 8px;
   color: #334155;
@@ -147,6 +156,44 @@ button,
   white-space: nowrap;
 }
 
+.qr-block {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+}
+
+.qr-copy {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.qr-copy .info-title {
+  margin-bottom: 0;
+}
+
+.qr-caption {
+  color: var(--app-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.sidebar-qr {
+  display: block;
+  width: 100%;
+  max-width: 188px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 7px;
+  border: 1px solid #e5edf6;
+  border-radius: 8px;
+  background: #ffffff;
+  object-fit: contain;
+}
+
 .nav-menu .el-menu-item,
 .el-menu-item {
   height: 44px;
@@ -182,6 +229,8 @@ button,
 }
 
 .content {
+  height: calc(100vh - 72px);
+  overflow: auto;
   padding: 22px;
 }
 
@@ -358,8 +407,16 @@ button,
 }
 
 .el-button {
+  min-height: 36px;
   border-radius: 7px;
   font-weight: 600;
+}
+
+.el-button:focus-visible,
+.el-menu-item:focus-visible,
+.el-dropdown:focus-visible {
+  outline: none;
+  box-shadow: var(--app-focus);
 }
 
 .el-button--primary {
@@ -407,6 +464,42 @@ button,
 
   .content {
     padding: 12px;
+  }
+
+  .section-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar {
+    width: 100%;
+  }
+
+  .toolbar > .el-input,
+  .toolbar > .el-select,
+  .toolbar > .el-date-editor,
+  .toolbar > .el-button,
+  .toolbar > .el-dropdown {
+    width: 100% !important;
+  }
+
+  .toolbar .el-dropdown > .el-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .metric-card {
+    min-height: 84px;
+  }
+
+  .metric-value {
+    font-size: 20px;
+  }
+
+  .el-pagination {
+    justify-content: flex-end;
+    white-space: normal;
   }
 }
 

@@ -67,6 +67,9 @@ class Repository:
         page_size: int,
         status: str | None = None,
         model: str | None = None,
+        api_protocol: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
     ) -> tuple[int, list[tuple[TestTask, TestResult | None]]]:
         page = max(1, page)
         page_size = min(max(1, page_size), 100)
@@ -76,19 +79,37 @@ class Repository:
                 filters.append(TestTask.status == status)
             if model:
                 filters.append(TestTask.model == model)
+            if created_from:
+                filters.append(TestTask.created_at >= created_from)
+            if created_to:
+                filters.append(TestTask.created_at <= created_to)
 
-            total_stmt = select(func.count()).select_from(TestTask).where(*filters)
-            total = int(db.execute(total_stmt).scalar_one())
-
-            stmt = (
+            base_stmt = (
                 select(TestTask, TestResult)
                 .outerjoin(TestResult, TestTask.id == TestResult.task_id)
                 .where(*filters)
                 .order_by(TestTask.created_at.desc())
-                .offset((page - 1) * page_size)
-                .limit(page_size)
             )
-            rows = db.execute(stmt).all()
+
+            if api_protocol:
+                rows = db.execute(base_stmt).all()
+                protocol_rows = []
+                for task, result in rows:
+                    try:
+                        protocol = json.loads(task.config_json).get("api_protocol", "openai")
+                    except json.JSONDecodeError:
+                        protocol = "openai"
+                    if protocol == api_protocol:
+                        protocol_rows.append((task, result))
+                total = len(protocol_rows)
+                rows = protocol_rows[(page - 1) * page_size : page * page_size]
+            else:
+                total_stmt = select(func.count()).select_from(TestTask).where(*filters)
+                total = int(db.execute(total_stmt).scalar_one())
+                rows = db.execute(
+                    base_stmt.offset((page - 1) * page_size).limit(page_size)
+                ).all()
+
             items: list[tuple[TestTask, TestResult | None]] = []
             for task, result in rows:
                 db.expunge(task)

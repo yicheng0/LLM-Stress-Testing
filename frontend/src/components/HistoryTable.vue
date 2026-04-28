@@ -21,19 +21,26 @@
     <el-table-column label="创建时间" min-width="170">
       <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
     </el-table-column>
-    <el-table-column label="操作" width="280" fixed="right">
+    <el-table-column label="操作" width="180" fixed="right">
       <template #default="{ row }">
-        <el-button size="small" :icon="Monitor" @click="$emit('run', row)">运行页</el-button>
-        <el-button size="small" :icon="CopyDocument" @click="$emit('copy', row)">复跑</el-button>
         <el-button size="small" type="primary" :icon="DataAnalysis" @click="$emit('report', row)">报告</el-button>
-        <el-button size="small" type="danger" :icon="Delete" @click="$emit('delete', row)" />
+        <el-dropdown trigger="click" @command="command => handleCommand(command, row)">
+          <el-button size="small" :icon="MoreFilled">更多</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="run" :icon="Monitor">运行页</el-dropdown-item>
+              <el-dropdown-item command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
+              <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </template>
     </el-table-column>
   </el-table>
 </template>
 
 <script setup>
-import { CopyDocument, DataAnalysis, Delete, Monitor } from '@element-plus/icons-vue'
+import { CopyDocument, DataAnalysis, Delete, Monitor, MoreFilled } from '@element-plus/icons-vue'
 
 defineProps({
   items: {
@@ -46,7 +53,7 @@ defineProps({
   }
 })
 
-defineEmits(['run', 'report', 'copy', 'delete'])
+const emit = defineEmits(['run', 'report', 'copy', 'delete'])
 
 const statusNames = {
   queued: '排队',
@@ -74,6 +81,10 @@ function protocolText(protocol) {
   if (protocol === 'anthropic') return 'Anthropic'
   if (protocol === 'gemini') return 'Gemini'
   return 'OpenAI-compatible'
+}
+
+function handleCommand(command, row) {
+  emit(command, row)
 }
 
 function percent(value) {

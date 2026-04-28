@@ -10,7 +10,10 @@ export const useTestsStore = defineStore('tests', {
     loading: false,
     filters: {
       status: '',
-      model: ''
+      model: '',
+      api_protocol: '',
+      created_from: '',
+      created_to: ''
     }
   }),
   actions: {

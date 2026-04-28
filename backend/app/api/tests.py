@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -105,10 +106,21 @@ async def list_tests(
     page_size: int = Query(default=20, ge=1, le=100),
     status: str | None = None,
     model: str | None = None,
+    api_protocol: str | None = Query(default=None, pattern="^(openai|anthropic|gemini)$"),
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
 ) -> TestListOut:
-    total, rows = repository.list_tasks(page, page_size, status=status, model=model)
+    total, rows = repository.list_tasks(
+        page,
+        page_size,
+        status=status,
+        model=model,
+        api_protocol=api_protocol,
+        created_from=created_from,
+        created_to=created_to,
+    )
     return TestListOut(
         total=total,
         page=page,

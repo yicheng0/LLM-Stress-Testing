@@ -42,6 +42,14 @@
             <code>https://api.apipro.ai</code>
           </div>
         </div>
+
+        <div class="info-block qr-block">
+          <div class="qr-copy">
+            <div class="info-title">扫码联系</div>
+            <div class="qr-caption">APIPro 技术支持</div>
+          </div>
+          <img class="sidebar-qr" src="/assets/apipro-qrcode.png" alt="APIPro 技术支持二维码" />
+        </div>
       </div>
     </el-aside>
 
