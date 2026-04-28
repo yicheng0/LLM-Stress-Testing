@@ -102,7 +102,7 @@ def _task_out(
     return TestTaskOut(
         id=task.id,
         name=task.name,
-        api_protocol=_config(task).get("api_protocol", "openai"),
+        api_protocol=task.api_protocol or _config(task).get("api_protocol", "openai"),
         base_url=task.base_url,
         endpoint=task.endpoint,
         model=task.model,
@@ -192,7 +192,7 @@ async def realtime_dashboard(
     for task, result in rows:
         status_counts[task.status] = status_counts.get(task.status, 0) + 1
         config = _config(task)
-        protocol = config.get("api_protocol", "openai")
+        protocol = task.api_protocol or config.get("api_protocol", "openai")
         protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
         model_counts[task.model] = model_counts.get(task.model, 0) + 1
         if result and result.error_message:

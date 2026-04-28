@@ -87,6 +87,7 @@ const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
 
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'
+  if (route.path.startsWith('/compare')) return '/history'
   if (route.path.startsWith('/help')) return '/help/parameters'
   if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
   return '/tests/new'
@@ -96,6 +97,7 @@ const routeTitle = computed(() => route.meta?.title || {
   'run-test': '实时运行',
   'test-report': '报告详情',
   history: '历史记录',
+  compare: '测试对比',
   'parameter-help': '参数说明',
   'realtime-dashboard': '实时数据面板'
 }[route.name] || '性能测试')

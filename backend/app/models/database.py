@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from backend.app.config import settings
@@ -17,6 +18,7 @@ class TestTask(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    api_protocol: Mapped[str] = mapped_column(String, nullable=False, default="openai", index=True)
     base_url: Mapped[str] = mapped_column(String, nullable=False)
     endpoint: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
@@ -71,3 +73,29 @@ def init_db() -> None:
 
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    _ensure_api_protocol_column()
+
+
+def _ensure_api_protocol_column() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    with engine.begin() as conn:
+        columns = [row[1] for row in conn.execute(text("PRAGMA table_info(test_tasks)")).fetchall()]
+        if "api_protocol" not in columns:
+            conn.execute(text("ALTER TABLE test_tasks ADD COLUMN api_protocol VARCHAR NOT NULL DEFAULT 'openai'"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_api_protocol ON test_tasks (api_protocol)"))
+
+        rows = conn.execute(text("SELECT id, config_json, api_protocol FROM test_tasks")).fetchall()
+        for task_id, config_json, current_protocol in rows:
+            protocol = "openai"
+            try:
+                protocol = json.loads(config_json or "{}").get("api_protocol", "openai")
+            except json.JSONDecodeError:
+                protocol = "openai"
+            if current_protocol == protocol:
+                continue
+            conn.execute(
+                text("UPDATE test_tasks SET api_protocol = :protocol WHERE id = :task_id"),
+                {"protocol": protocol, "task_id": task_id},
+            )

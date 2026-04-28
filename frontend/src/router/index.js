@@ -13,6 +13,7 @@ const routes = [
     meta: { printLayout: true }
   },
   { path: '/history', name: 'history', component: () => import('../views/History.vue') },
+  { path: '/compare', name: 'compare', component: () => import('../views/Compare.vue') },
   { path: '/help/parameters', name: 'parameter-help', component: () => import('../views/ParameterHelp.vue') },
   { path: '/dashboard/realtime', name: 'realtime-dashboard', component: () => import('../views/RealtimeDashboard.vue') }
 ]

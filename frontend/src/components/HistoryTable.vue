@@ -1,5 +1,6 @@
 <template>
-  <el-table :data="items" v-loading="loading" border>
+  <el-table :data="items" v-loading="loading" border @selection-change="$emit('selection-change', $event)">
+    <el-table-column type="selection" width="46" />
     <el-table-column prop="name" label="测试名称" min-width="190" show-overflow-tooltip />
     <el-table-column label="协议" width="150">
       <template #default="{ row }">{{ protocolText(row.api_protocol) }}</template>
@@ -53,7 +54,7 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['run', 'report', 'copy', 'delete'])
+const emit = defineEmits(['run', 'report', 'copy', 'delete', 'selection-change'])
 
 const statusNames = {
   queued: '排队',

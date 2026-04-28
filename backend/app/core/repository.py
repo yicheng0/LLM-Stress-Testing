@@ -30,6 +30,7 @@ class Repository:
         task = TestTask(
             id=task_id,
             name=payload.name,
+            api_protocol=payload.api_protocol,
             base_url=payload.base_url,
             endpoint=payload.endpoint,
             model=payload.model,
@@ -79,6 +80,8 @@ class Repository:
                 filters.append(TestTask.status == status)
             if model:
                 filters.append(TestTask.model == model)
+            if api_protocol:
+                filters.append(TestTask.api_protocol == api_protocol)
             if created_from:
                 filters.append(TestTask.created_at >= created_from)
             if created_to:
@@ -91,24 +94,11 @@ class Repository:
                 .order_by(TestTask.created_at.desc())
             )
 
-            if api_protocol:
-                rows = db.execute(base_stmt).all()
-                protocol_rows = []
-                for task, result in rows:
-                    try:
-                        protocol = json.loads(task.config_json).get("api_protocol", "openai")
-                    except json.JSONDecodeError:
-                        protocol = "openai"
-                    if protocol == api_protocol:
-                        protocol_rows.append((task, result))
-                total = len(protocol_rows)
-                rows = protocol_rows[(page - 1) * page_size : page * page_size]
-            else:
-                total_stmt = select(func.count()).select_from(TestTask).where(*filters)
-                total = int(db.execute(total_stmt).scalar_one())
-                rows = db.execute(
-                    base_stmt.offset((page - 1) * page_size).limit(page_size)
-                ).all()
+            total_stmt = select(func.count()).select_from(TestTask).where(*filters)
+            total = int(db.execute(total_stmt).scalar_one())
+            rows = db.execute(
+                base_stmt.offset((page - 1) * page_size).limit(page_size)
+            ).all()
 
             items: list[tuple[TestTask, TestResult | None]] = []
             for task, result in rows:

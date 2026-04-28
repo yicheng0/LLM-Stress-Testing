@@ -28,6 +28,25 @@
         />
         <el-button :icon="Search" type="primary" @click="reload">筛选</el-button>
         <el-button :icon="RefreshLeft" @click="resetFilters">重置</el-button>
+        <el-button :icon="DataAnalysis" :disabled="!canCompare" @click="goCompare">
+          对比 {{ selectedRows.length || '' }}
+        </el-button>
+        <el-dropdown trigger="click" :disabled="!canExport" @command="exportSelectedReport">
+          <el-button type="primary" :icon="Download">
+            导出报告
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="pdf">PDF 报告</el-dropdown-item>
+              <el-dropdown-item command="html">HTML 可视化报告</el-dropdown-item>
+              <el-dropdown-item command="markdown">Markdown 报告</el-dropdown-item>
+              <el-dropdown-item command="summary">Summary JSON</el-dropdown-item>
+              <el-dropdown-item command="details">Details JSONL</el-dropdown-item>
+              <el-dropdown-item command="matrix_csv">Matrix CSV</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
     <div class="section-body">
@@ -38,6 +57,7 @@
         @report="row => router.push(`/tests/${row.id}/report`)"
         @copy="copyRerun"
         @delete="confirmDelete"
+        @selection-change="selectedRows = $event"
       />
       <div class="pagination-row">
         <el-pagination
@@ -54,17 +74,20 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { RefreshLeft, Search } from '@element-plus/icons-vue'
+import { ArrowDown, DataAnalysis, Download, RefreshLeft, Search } from '@element-plus/icons-vue'
 import HistoryTable from '../components/HistoryTable.vue'
-import { deleteTest } from '../api/client'
+import { deleteTest, downloadUrl } from '../api/client'
 import { useTestsStore } from '../stores/tests'
 
 const router = useRouter()
 const store = useTestsStore()
 const createdRange = ref([])
+const selectedRows = ref([])
+const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4)
+const canExport = computed(() => selectedRows.value.length === 1)
 
 function reload() {
   store.page = 1
@@ -122,6 +145,32 @@ function copyRerun(row) {
   }
   sessionStorage.setItem('rerun_config', JSON.stringify(copied))
   router.push('/tests/new')
+}
+
+function goCompare() {
+  if (!canCompare.value) {
+    ElMessage.warning('请选择 2-4 条记录进行对比')
+    return
+  }
+  router.push(`/compare?ids=${selectedRows.value.map((item) => item.id).join(',')}`)
+}
+
+function exportSelectedReport(kind) {
+  if (!canExport.value) {
+    ElMessage.warning('请选择 1 条记录导出报告')
+    return
+  }
+  const row = selectedRows.value[0]
+  if (kind === 'pdf') {
+    const url = router.resolve({
+      name: 'test-report-print',
+      params: { id: row.id },
+      query: { autoprint: '1' }
+    }).href
+    window.open(url, '_blank')
+    return
+  }
+  window.open(downloadUrl(row.id, kind), '_blank')
 }
 
 onMounted(() => {
