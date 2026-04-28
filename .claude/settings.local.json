@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:open.bigmodel.cn)",
+      "WebFetch(domain:docs.aimlapi.com)",
+      "Bash(pip install *)",
+      "Bash(python *)",
+      "Bash(grep -E \"^d|\\\\.py$|\\\\.md$\")"
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "config": {
+    "base_url": "https://api.wenwen-ai.com/v1",
+    "endpoint": "/chat/completions",
+    "model": "glm-5.1",
+    "concurrency": 10,
+    "duration_sec": 30,
+    "input_tokens_target": 1000,
+    "input_tokens_actual": 11803,
+    "max_output_tokens": 128,
+    "timeout_sec": 600,
+    "warmup_requests": 5,
+    "enable_stream": true
+  },
+  "results": {
+    "total_requests": 20,
+    "successful_requests": 20,
+    "failed_requests": 0,
+    "success_rate": 1.0,
+    "qps": 0.6667,
+    "rpm": 40.0,
+    "input_tpm": 472120.0,
+    "output_tpm": 10394.0,
+    "total_tpm": 315354.0,
+    "input_tps": 7868.67,
+    "output_tps": 173.23,
+    "total_tps": 5255.9,
+    "latency_sec_avg": 12.4271,
+    "latency_sec_p50": 10.6259,
+    "latency_sec_p90": 18.2354,
+    "latency_sec_p95": 18.5077,
+    "latency_sec_p99": 19.839,
+    "ttft_sec_avg": 5.2354,
+    "ttft_sec_p50": 4.0499,
+    "ttft_sec_p90": 7.172,
+    "ttft_sec_p95": 11.5915,
+    "ttft_sec_p99": 13.2195,
+    "ttft_samples": 20,
+    "decode_sec_avg": 7.1917,
+    "decode_sec_p50": 6.0594,
+    "decode_sec_p90": 12.7999,
+    "decode_sec_p95": 13.3944,
+    "decode_sec_p99": 14.7908,
+    "status_counts": {
+      "200": 20
+    },
+    "error_counts": {},
+    "total_input_tokens": 236060,
+    "total_output_tokens": 5197,
+    "total_tokens": 157677
+  }
+}
