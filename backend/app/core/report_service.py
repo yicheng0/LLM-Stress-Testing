@@ -102,9 +102,16 @@ def build_matrix_chart_data(results_matrix: list[dict[str, Any]]) -> dict[str, A
             "rpm": res.get("rpm"),
             "qps": res.get("qps"),
             "total_tpm": res.get("total_tpm"),
+            "total_tps": res.get("total_tps"),
             "success_rate": res.get("success_rate"),
+            "latency_avg": res.get("latency_sec_avg"),
+            "latency_p50": res.get("latency_sec_p50"),
             "latency_p95": res.get("latency_sec_p95"),
+            "latency_p99": res.get("latency_sec_p99"),
+            "ttft_avg": res.get("ttft_sec_avg"),
+            "ttft_p50": res.get("ttft_sec_p50"),
             "ttft_p95": res.get("ttft_sec_p95"),
+            "ttft_p99": res.get("ttft_sec_p99"),
         })
 
     return {

@@ -2,6 +2,7 @@
   <div class="section">
     <div class="section-header">
       <h2 class="section-title">{{ title }}</h2>
+      <slot name="actions" />
     </div>
     <div class="section-body">
       <div ref="chartEl" class="chart" />

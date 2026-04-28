@@ -56,10 +56,33 @@
         </div>
       </div>
     </div>
+
+    <div class="section dashboard-entry">
+      <div class="section-header">
+        <h2 class="section-title">实时测试数据面板</h2>
+        <el-button type="primary" :icon="DataAnalysis" @click="router.push('/dashboard/realtime')">
+          打开实时面板
+        </el-button>
+      </div>
+      <div class="section-body">
+        <div class="dashboard-entry-body">
+          <div>
+            <strong>查看运行中任务的 RPM、TPM、成功率、P95 和协议分布。</strong>
+            <span>面板会自动刷新，适合在压测过程中单独打开观察整体表现。</span>
+          </div>
+          <el-button :icon="ArrowRight" @click="router.push('/dashboard/realtime')">进入页面</el-button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+import { ArrowRight, DataAnalysis } from '@element-plus/icons-vue'
+
+const router = useRouter()
+
 const groups = [
   {
     title: '基础配置',
@@ -290,6 +313,34 @@ const metrics = [
   line-height: 1.55;
 }
 
+.dashboard-entry-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 48%, #fff7ed 100%);
+}
+
+.dashboard-entry-body > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-entry-body strong {
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.dashboard-entry-body span {
+  color: #64748b;
+  font-size: 13px;
+}
+
 code {
   color: #1d4ed8;
   font-family: "Fira Code", Consolas, monospace;
@@ -299,6 +350,11 @@ code {
   .intro-grid,
   .metric-doc-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-entry-body {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

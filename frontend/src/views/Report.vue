@@ -42,6 +42,18 @@
 
     <template v-if="isMatrix">
       <MetricCards :items="matrixMetricItems" />
+      <ChartPanel title="矩阵结果热力图" :option="matrixHeatmapOption">
+        <template #actions>
+          <el-select v-model="matrixHeatmapMetric" class="metric-select" size="small">
+            <el-option
+              v-for="item in matrixHeatmapMetrics"
+              :key="item.field"
+              :label="item.label"
+              :value="item.field"
+            />
+          </el-select>
+        </template>
+      </ChartPanel>
       <div class="grid-2 report-grid">
         <ChartPanel title="矩阵 TPM" :option="matrixTpmOption" />
         <ChartPanel title="矩阵 P95 延迟" :option="matrixLatencyOption" />
@@ -55,12 +67,29 @@
             <el-table-column prop="input_tokens" label="输入 Token" />
             <el-table-column prop="concurrency" label="并发" />
             <el-table-column prop="rpm" label="RPM" />
+            <el-table-column prop="total_tps" label="TPS" />
             <el-table-column prop="total_tpm" label="TPM" />
             <el-table-column label="成功率">
               <template #default="{ row }">{{ percent(row.success_rate) }}</template>
             </el-table-column>
-            <el-table-column prop="latency_p95" label="P95 延迟" />
-            <el-table-column prop="ttft_p95" label="P95 TTFT" />
+            <el-table-column label="耗时 Avg">
+              <template #default="{ row }">{{ seconds(row.latency_avg) }}</template>
+            </el-table-column>
+            <el-table-column label="耗时 P50">
+              <template #default="{ row }">{{ seconds(row.latency_p50) }}</template>
+            </el-table-column>
+            <el-table-column label="耗时 P99">
+              <template #default="{ row }">{{ seconds(row.latency_p99) }}</template>
+            </el-table-column>
+            <el-table-column label="TTFT Avg">
+              <template #default="{ row }">{{ seconds(row.ttft_avg) }}</template>
+            </el-table-column>
+            <el-table-column label="TTFT P50">
+              <template #default="{ row }">{{ seconds(row.ttft_p50) }}</template>
+            </el-table-column>
+            <el-table-column label="TTFT P99">
+              <template #default="{ row }">{{ seconds(row.ttft_p99) }}</template>
+            </el-table-column>
           </el-table>
         </div>
       </div>
@@ -184,6 +213,18 @@ const details = reactive({
   pageSize: 50,
   items: []
 })
+const matrixHeatmapMetric = ref('total_tpm')
+const matrixHeatmapMetrics = [
+  { field: 'total_tpm', label: 'TPM', kind: 'throughput' },
+  { field: 'rpm', label: 'RPM', kind: 'throughput' },
+  { field: 'total_tps', label: 'TPS', kind: 'throughput' },
+  { field: 'ttft_avg', label: 'TTFT Average', kind: 'latency' },
+  { field: 'ttft_p50', label: 'TTFT P50', kind: 'latency' },
+  { field: 'ttft_p99', label: 'TTFT P99', kind: 'latency' },
+  { field: 'latency_avg', label: '耗时 Average', kind: 'latency' },
+  { field: 'latency_p50', label: '耗时 P50', kind: 'latency' },
+  { field: 'latency_p99', label: '耗时 P99', kind: 'latency' }
+]
 
 const summary = computed(() => report.value?.summary || {})
 const config = computed(() => report.value?.config || summary.value?.config || {})
@@ -282,6 +323,106 @@ const errorOption = computed(() => {
 
 const matrixTpmOption = computed(() => matrixBarOption('total_tpm', 'TPM', '#f97316'))
 const matrixLatencyOption = computed(() => matrixBarOption('latency_p95', 'P95 延迟', '#2563eb'))
+const selectedHeatmapMetric = computed(() => (
+  matrixHeatmapMetrics.find((item) => item.field === matrixHeatmapMetric.value) || matrixHeatmapMetrics[0]
+))
+const matrixHeatmapOption = computed(() => {
+  const inputs = uniqueSorted(matrixPoints.value.map((item) => item.input_tokens))
+  const concurrency = uniqueSorted(matrixPoints.value.map((item) => item.concurrency))
+  const metric = selectedHeatmapMetric.value
+  const values = matrixPoints.value
+    .map((item) => Number(item[metric.field]))
+    .filter((item) => Number.isFinite(item))
+  const max = Math.max(1, ...values)
+  const pointMap = new Map(matrixPoints.value.map((item) => [
+    `${Number(item.input_tokens)}:${Number(item.concurrency)}`,
+    item
+  ]))
+  const data = []
+  inputs.forEach((inputTokens, yIndex) => {
+    concurrency.forEach((concurrencyValue, xIndex) => {
+      const point = pointMap.get(`${inputTokens}:${concurrencyValue}`)
+      const value = point ? Number(point[metric.field]) : null
+      data.push([
+        xIndex,
+        yIndex,
+        Number.isFinite(value) ? value : null,
+        point || { input_tokens: inputTokens, concurrency: concurrencyValue }
+      ])
+    })
+  })
+  const colors = metric.kind === 'latency'
+    ? ['#dcfce7', '#facc15', '#dc2626']
+    : ['#eff6ff', '#93c5fd', '#16a34a']
+
+  return {
+    tooltip: {
+      position: 'top',
+      formatter(params) {
+        const point = params.data?.[3] || {}
+        const value = params.data?.[2]
+        return [
+          `${number(point.input_tokens)} Token / ${number(point.concurrency)} 并发`,
+          `${metric.label}: ${formatMetricValue(value, metric.field)}`,
+          `TPM: ${number(point.total_tpm)}`,
+          `RPM: ${number(point.rpm)}`,
+          `TPS: ${number(point.total_tps)}`,
+          `成功率: ${percent(point.success_rate)}`,
+          `TTFT Avg/P50/P99: ${seconds(point.ttft_avg)} / ${seconds(point.ttft_p50)} / ${seconds(point.ttft_p99)}`,
+          `耗时 Avg/P50/P99: ${seconds(point.latency_avg)} / ${seconds(point.latency_p50)} / ${seconds(point.latency_p99)}`
+        ].join('<br/>')
+      }
+    },
+    grid: { left: 86, right: 28, top: 24, bottom: 74 },
+    xAxis: {
+      type: 'category',
+      name: '并发',
+      nameLocation: 'middle',
+      nameGap: 44,
+      data: concurrency.map((item) => String(item)),
+      splitArea: { show: true }
+    },
+    yAxis: {
+      type: 'category',
+      name: '输入 Token',
+      nameGap: 54,
+      data: inputs.map((item) => compactNumber(item)),
+      splitArea: { show: true }
+    },
+    visualMap: {
+      min: 0,
+      max,
+      calculable: true,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 8,
+      inRange: { color: colors }
+    },
+    series: [{
+      name: metric.label,
+      type: 'heatmap',
+      data,
+      label: {
+        show: true,
+        formatter(params) {
+          return formatMetricValue(params.data?.[2], metric.field, true)
+        }
+      },
+      itemStyle: {
+        borderColor: '#ffffff',
+        borderWidth: 2,
+        borderRadius: 4
+      },
+      emphasis: {
+        itemStyle: {
+          borderColor: '#1d4ed8',
+          shadowBlur: 10,
+          shadowColor: 'rgba(15, 23, 42, 0.22)'
+        }
+      }
+    }]
+  }
+})
 
 async function loadReport() {
   loading.value = true
@@ -365,6 +506,20 @@ function matrixBarOption(field, label, color) {
   }
 }
 
+function uniqueSorted(values) {
+  return [...new Set(values
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item)))]
+    .sort((a, b) => a - b)
+}
+
+function formatMetricValue(value, field, compact = false) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
+  if (field.startsWith('latency_') || field.startsWith('ttft_')) return seconds(value)
+  if (compact) return compactNumber(value)
+  return number(value)
+}
+
 function openDownload(kind) {
   window.open(downloadUrl(props.id, kind), '_blank')
 }
@@ -383,6 +538,11 @@ function copyRerun() {
 function number(value) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
+function compactNumber(value) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
+  return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
 }
 
 function percent(value) {
@@ -426,9 +586,19 @@ onMounted(loadReport)
   margin-top: 16px;
 }
 
+.metric-select {
+  width: 180px;
+}
+
 .pagination-row {
   display: flex;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+@media (max-width: 720px) {
+  .metric-select {
+    width: 100%;
+  }
 }
 </style>

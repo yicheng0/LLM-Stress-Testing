@@ -22,6 +22,10 @@
           <el-icon><Document /></el-icon>
           <span>参数说明</span>
         </el-menu-item>
+        <el-menu-item index="/dashboard/realtime">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>实时面板</span>
+        </el-menu-item>
       </el-menu>
 
       <div class="sidebar-info">
@@ -72,7 +76,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, Document, Plus, Refresh } from '@element-plus/icons-vue'
+import { Clock, DataAnalysis, Document, Plus, Refresh } from '@element-plus/icons-vue'
 import packageInfo from '../package.json'
 
 const route = useRoute()
@@ -82,6 +86,7 @@ const appVersion = packageInfo.version
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'
   if (route.path.startsWith('/help')) return '/help/parameters'
+  if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
   return '/tests/new'
 })
 const routeTitle = computed(() => route.meta?.title || {
@@ -89,7 +94,8 @@ const routeTitle = computed(() => route.meta?.title || {
   'run-test': '实时运行',
   'test-report': '报告详情',
   history: '历史记录',
-  'parameter-help': '参数说明'
+  'parameter-help': '参数说明',
+  'realtime-dashboard': '实时数据面板'
 }[route.name] || '性能测试')
 
 const today = new Intl.DateTimeFormat('zh-CN', {

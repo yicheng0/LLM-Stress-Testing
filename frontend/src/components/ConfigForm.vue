@@ -148,10 +148,55 @@
         <el-form-item label="单点时长（秒）" prop="matrix_duration_sec">
           <el-input-number v-model="form.matrix_duration_sec" :min="1" :max="86400" controls-position="right" />
         </el-form-item>
+        <div class="matrix-derived-note full-row">
+          以下预览根据上方输入 Token 列表、并发列表和单点时长实时计算。
+        </div>
         <div class="matrix-preview full-row">
-          <span>预计测试点</span>
-          <strong>{{ matrixPointCount }}</strong>
-          <span>组</span>
+          <div>
+            <span>当前组合数</span>
+            <strong>{{ matrixPointCount }}</strong>
+            <span>组</span>
+          </div>
+          <div>
+            <span>估算总时长</span>
+            <strong>{{ matrixEstimatedMinutes }}</strong>
+            <span>分钟</span>
+          </div>
+          <div>
+            <span>最高单点压力</span>
+            <strong>{{ number(maxMatrixPressure) }}</strong>
+            <span>Token x 并发</span>
+          </div>
+        </div>
+        <div class="matrix-heatmap full-row">
+          <div class="matrix-heatmap-header">
+            <div>
+              <h3>实时预览热力图</h3>
+              <p>由当前表单自动推导：输入 Token x 并发，颜色越深表示该测试点压力越高。</p>
+            </div>
+            <el-tag effect="plain">预计压力量</el-tag>
+          </div>
+          <div class="matrix-heatmap-grid" :style="matrixGridStyle">
+            <div class="matrix-corner">Token / 并发</div>
+            <div v-for="concurrency in matrixConcurrencyValues" :key="`c-${concurrency}`" class="matrix-axis">
+              {{ concurrency }}
+            </div>
+            <template v-for="inputTokens in matrixInputValues" :key="`row-${inputTokens}`">
+              <div class="matrix-axis matrix-axis-y">{{ number(inputTokens) }}</div>
+              <div
+                v-for="concurrency in matrixConcurrencyValues"
+                :key="`${inputTokens}-${concurrency}`"
+                class="matrix-cell"
+                :style="{
+                  backgroundColor: pressureColor(inputTokens * concurrency),
+                  color: pressureTextColor(inputTokens * concurrency)
+                }"
+              >
+                <strong>{{ compactNumber(inputTokens * concurrency) }}</strong>
+                <span>{{ compactNumber(inputTokens) }} x {{ concurrency }}</span>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -162,17 +207,42 @@
         <span>{{ form.matrix_mode ? `矩阵 ${matrixPointCount} 组` : `${form.concurrency} 并发 · ${form.duration_sec}s` }}</span>
       </div>
       <div class="action-buttons">
-        <el-popover placement="top-end" trigger="click" :width="360">
+        <el-popover placement="top-end" trigger="click" :width="520">
           <template #reference>
             <el-button :icon="Document">参数预览</el-button>
           </template>
           <div class="config-preview">
-            <div><span>协议</span><strong>{{ protocolText }}</strong></div>
-            <div><span>认证</span><strong>{{ selectedProtocol.auth }}</strong></div>
-            <div><span>Base URL</span><code>{{ form.base_url }}</code></div>
-            <div><span>Endpoint</span><code>{{ form.endpoint }}</code></div>
-            <div><span>流式</span><strong>{{ form.enable_stream ? '开启' : '关闭' }}</strong></div>
-            <div><span>负载</span><strong>{{ form.matrix_mode ? `${matrixPointCount} 组矩阵` : `${form.concurrency} 并发 / ${form.duration_sec}s` }}</strong></div>
+            <div class="preview-title">
+              <strong>预执行参数总览</strong>
+              <span>真实 RPM/TPM/TPS 以完成后的报告为准</span>
+            </div>
+            <div class="preview-section">
+              <h4>接口配置</h4>
+              <div><span>协议</span><strong>{{ protocolText }}</strong></div>
+              <div><span>认证</span><strong>{{ selectedProtocol.auth }}</strong></div>
+              <div><span>Base URL</span><code>{{ form.base_url }}</code></div>
+              <div><span>Endpoint</span><code>{{ form.endpoint }}</code></div>
+              <div><span>模型</span><strong>{{ form.model || '-' }}</strong></div>
+              <div><span>流式</span><strong>{{ form.enable_stream ? '开启' : '关闭' }}</strong></div>
+            </div>
+            <div class="preview-section">
+              <h4>负载配置</h4>
+              <div><span>模式</span><strong>{{ form.matrix_mode ? '矩阵测试' : '单点测试' }}</strong></div>
+              <div><span>并发</span><strong>{{ form.matrix_mode ? matrixConcurrencyValues.join(', ') : form.concurrency }}</strong></div>
+              <div><span>输入 Token</span><strong>{{ form.matrix_mode ? matrixInputValues.map(number).join(', ') : number(form.input_tokens) }}</strong></div>
+              <div><span>最大输出</span><strong>{{ number(form.max_output_tokens) }} Token</strong></div>
+              <div><span>单点时长</span><strong>{{ form.matrix_mode ? `${form.matrix_duration_sec}s` : `${form.duration_sec}s` }}</strong></div>
+              <div><span>预热请求</span><strong>{{ number(form.warmup_requests) }}</strong></div>
+            </div>
+            <div class="preview-section">
+              <h4>理论压力估算</h4>
+              <div><span>组合数</span><strong>{{ matrixPointCount }} 组</strong></div>
+              <div><span>估算总时长</span><strong>{{ estimatedTotalDurationText }}</strong></div>
+              <div><span>理论 RPM</span><strong>{{ estimatedRpmText }}</strong></div>
+              <div><span>理论 TPM</span><strong>{{ estimatedTpmText }}</strong></div>
+              <div><span>理论 TPS</span><strong>{{ estimatedTpsText }}</strong></div>
+              <div><span>单请求 Token</span><strong>{{ number(estimatedTokensPerRequest) }}</strong></div>
+            </div>
           </div>
         </el-popover>
         <el-button :icon="RefreshLeft" @click="reset">恢复默认</el-button>
@@ -316,10 +386,58 @@ const selectedProtocol = computed(() => (
 const protocolText = computed(() => selectedProtocol.value.label)
 const matrixPointCount = computed(() => {
   if (!form.matrix_mode) return 1
-  const inputs = parseList(form.input_tokens_list)
-  const concurrency = parseList(form.concurrency_list)
+  const inputs = matrixInputValues.value
+  const concurrency = matrixConcurrencyValues.value
   return Math.max(0, inputs.length * concurrency.length)
 })
+const matrixInputValues = computed(() => parseNumberList(form.input_tokens_list))
+const matrixConcurrencyValues = computed(() => parseNumberList(form.concurrency_list))
+const matrixEstimatedMinutes = computed(() => {
+  const seconds = matrixPointCount.value * Number(form.matrix_duration_sec || 0)
+  return number(seconds / 60)
+})
+const maxMatrixPressure = computed(() => Math.max(0, ...matrixInputValues.value.flatMap((inputTokens) => (
+  matrixConcurrencyValues.value.map((concurrency) => inputTokens * concurrency)
+))))
+const matrixGridStyle = computed(() => ({
+  gridTemplateColumns: `minmax(92px, 0.8fr) repeat(${Math.max(1, matrixConcurrencyValues.value.length)}, minmax(112px, 1fr))`
+}))
+const estimatedTokensPerRequest = computed(() => Number(form.input_tokens || 0) + Number(form.max_output_tokens || 0))
+const estimatedSingleRpm = computed(() => {
+  const duration = Number(form.duration_sec || 0)
+  if (duration <= 0) return 0
+  return Number(form.concurrency || 0) * 60 / duration
+})
+const estimatedSingleTpm = computed(() => estimatedSingleRpm.value * estimatedTokensPerRequest.value)
+const estimatedSingleTps = computed(() => estimatedSingleTpm.value / 60)
+const estimatedMatrixRpmRange = computed(() => {
+  const duration = Number(form.matrix_duration_sec || 0)
+  if (duration <= 0 || !matrixConcurrencyValues.value.length) return [0, 0]
+  const values = matrixConcurrencyValues.value.map((item) => item * 60 / duration)
+  return [Math.min(...values), Math.max(...values)]
+})
+const estimatedMatrixTpmRange = computed(() => {
+  const [minRpm, maxRpm] = estimatedMatrixRpmRange.value
+  if (!matrixInputValues.value.length) return [0, 0]
+  const tokenValues = matrixInputValues.value.map((item) => item + Number(form.max_output_tokens || 0))
+  return [minRpm * Math.min(...tokenValues), maxRpm * Math.max(...tokenValues)]
+})
+const estimatedMatrixTpsRange = computed(() => estimatedMatrixTpmRange.value.map((item) => item / 60))
+const estimatedTotalDurationText = computed(() => {
+  const seconds = form.matrix_mode
+    ? matrixPointCount.value * Number(form.matrix_duration_sec || 0)
+    : Number(form.duration_sec || 0)
+  return `${number(seconds / 60)} 分钟`
+})
+const estimatedRpmText = computed(() => (
+  form.matrix_mode ? rangeText(estimatedMatrixRpmRange.value) : number(estimatedSingleRpm.value)
+))
+const estimatedTpmText = computed(() => (
+  form.matrix_mode ? rangeText(estimatedMatrixTpmRange.value) : number(estimatedSingleTpm.value)
+))
+const estimatedTpsText = computed(() => (
+  form.matrix_mode ? rangeText(estimatedMatrixTpsRange.value) : number(estimatedSingleTps.value)
+))
 
 function isKnownBaseUrl(value) {
   return domainOptions.some((item) => item.value === value)
@@ -345,6 +463,45 @@ function parseList(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function parseNumberList(value) {
+  return [...new Set(parseList(value)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0))]
+}
+
+function pressureColor(value) {
+  const ratio = pressureRatio(value)
+  const lightness = 92 - ratio * 52
+  const saturation = 72 + ratio * 10
+  return `hsl(217, ${saturation.toFixed(1)}%, ${lightness.toFixed(1)}%)`
+}
+
+function pressureTextColor(value) {
+  return pressureRatio(value) > 0.48 ? '#ffffff' : '#1e3a8a'
+}
+
+function pressureRatio(value) {
+  const max = maxMatrixPressure.value || 1
+  return Math.min(1, Math.max(0.08, value / max))
+}
+
+function number(value) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
+function compactNumber(value) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
+  return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
+}
+
+function rangeText(values) {
+  const [min, max] = values
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return '-'
+  if (min === max) return number(min)
+  return `${number(min)} - ${number(max)}`
 }
 
 watch(
@@ -595,9 +752,9 @@ function reset() {
 }
 
 .matrix-preview {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   min-height: 40px;
   padding: 10px 12px;
   border: 1px dashed #93b4e8;
@@ -606,30 +763,160 @@ function reset() {
   color: #64748b;
 }
 
+.matrix-derived-note {
+  margin-top: -2px;
+  padding: 9px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.matrix-preview > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .matrix-preview strong {
   color: #2563eb;
   font-family: "Fira Code", Consolas, monospace;
   font-size: 18px;
 }
 
-.config-preview {
-  display: grid;
-  gap: 9px;
+.matrix-heatmap {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.config-preview > div {
+.matrix-heatmap-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.matrix-heatmap-header h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.matrix-heatmap-header p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.matrix-heatmap-grid {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  min-width: 100%;
+  overflow-x: auto;
+  gap: 6px;
+}
+
+.matrix-corner,
+.matrix-axis,
+.matrix-cell {
+  min-height: 44px;
+  border-radius: 7px;
+}
+
+.matrix-corner,
+.matrix-axis {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.matrix-axis-y {
+  justify-content: end;
+  padding-right: 10px;
+  font-family: "Fira Code", Consolas, monospace;
+}
+
+.matrix-cell {
+  display: flex;
+  min-width: 112px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 9px 10px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.matrix-cell strong {
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.matrix-cell span {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.config-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.preview-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5edf6;
+}
+
+.preview-title strong {
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.preview-title span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.preview-section {
+  display: grid;
+  gap: 8px;
+}
+
+.preview-section h4 {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.preview-section > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
   gap: 10px;
   align-items: baseline;
 }
 
-.config-preview span {
+.preview-section span {
   color: #64748b;
 }
 
-.config-preview code,
-.config-preview strong {
+.preview-section code,
+.preview-section strong {
   min-width: 0;
   overflow: hidden;
   color: #1e293b;
@@ -644,6 +931,14 @@ function reset() {
 }
 
 @media (max-width: 720px) {
+  .matrix-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .matrix-heatmap {
+    overflow-x: auto;
+  }
+
   .form-actions {
     align-items: stretch;
     flex-direction: column;
