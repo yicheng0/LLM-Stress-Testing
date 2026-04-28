@@ -44,6 +44,10 @@ export function listTests(params = {}) {
   return request(`/api/tests${suffix}`)
 }
 
+export function getRealtimeDashboard() {
+  return request('/api/tests/dashboard/realtime')
+}
+
 export function getTest(id) {
   return request(`/api/tests/${id}`)
 }

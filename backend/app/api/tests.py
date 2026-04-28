@@ -50,6 +50,50 @@ def _safe_load_summary(result: TestResult | None) -> dict[str, Any] | None:
         return None
 
 
+def _config(task: TestTask) -> dict[str, Any]:
+    try:
+        return json.loads(task.config_json)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
+    if not summary:
+        return {}
+    if summary.get("matrix"):
+        points = summary.get("results_matrix") or []
+        if not points:
+            return {}
+        best_tpm = max((_num(point.get("results", {}).get("total_tpm")) for point in points), default=0.0)
+        best_rpm = max((_num(point.get("results", {}).get("rpm")) for point in points), default=0.0)
+        success_rates = [
+            _num(point.get("results", {}).get("success_rate"))
+            for point in points
+            if point.get("results", {}).get("success_rate") is not None
+        ]
+        p95_values = [
+            _num(point.get("results", {}).get("latency_sec_p95"))
+            for point in points
+            if point.get("results", {}).get("latency_sec_p95") is not None
+        ]
+        return {
+            "rpm": best_rpm,
+            "total_tpm": best_tpm,
+            "success_rate": sum(success_rates) / len(success_rates) if success_rates else None,
+            "latency_sec_p95": max(p95_values) if p95_values else None,
+        }
+    return summary.get("results") or {}
+
+
 def _task_out(
     task: TestTask,
     result: TestResult | None,
@@ -58,7 +102,7 @@ def _task_out(
     return TestTaskOut(
         id=task.id,
         name=task.name,
-        api_protocol=json.loads(task.config_json).get("api_protocol", "openai"),
+        api_protocol=_config(task).get("api_protocol", "openai"),
         base_url=task.base_url,
         endpoint=task.endpoint,
         model=task.model,
@@ -127,6 +171,98 @@ async def list_tests(
         page_size=page_size,
         items=[_task_out(task, result, progress_hub.snapshot(task.id)) for task, result in rows],
     )
+
+
+@router.get("/dashboard/realtime")
+async def realtime_dashboard(
+    repository: Repository = Depends(get_repository),
+    progress_hub: ProgressHub = Depends(get_progress_hub),
+) -> dict[str, Any]:
+    total, rows = repository.list_tasks(1, 100)
+    status_counts: dict[str, int] = {}
+    protocol_counts = {"openai": 0, "anthropic": 0, "gemini": 0}
+    model_counts: dict[str, int] = {}
+    error_counts: dict[str, int] = {}
+    active_statuses = {"queued", "running", "stopping"}
+    active_tasks = 0
+    metric_sources: list[dict[str, Any]] = []
+    fallback_metric_sources: list[dict[str, Any]] = []
+    recent_tasks = []
+
+    for task, result in rows:
+        status_counts[task.status] = status_counts.get(task.status, 0) + 1
+        config = _config(task)
+        protocol = config.get("api_protocol", "openai")
+        protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+        model_counts[task.model] = model_counts.get(task.model, 0) + 1
+        if result and result.error_message:
+            error_type = result.error_message.split(":", 1)[0][:80] or "unknown"
+            error_counts[error_type] = error_counts.get(error_type, 0) + 1
+
+        progress = progress_hub.snapshot(task.id) or {}
+        summary = _safe_load_summary(result)
+        summary_results = _summary_results(summary)
+        is_active = task.status in active_statuses
+        if is_active:
+            active_tasks += 1
+
+        item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
+        item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
+        item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
+        item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
+        metric_item = {
+            "rpm": item_rpm,
+            "tpm": item_tpm,
+            "success_rate": item_success_rate,
+            "latency_p95": item_p95,
+        }
+        if is_active:
+            metric_sources.append(metric_item)
+        fallback_metric_sources.append(metric_item)
+
+        recent_tasks.append({
+            "id": task.id,
+            "name": task.name,
+            "status": task.status,
+            "api_protocol": protocol,
+            "model": task.model,
+            "concurrency": task.concurrency,
+            "created_at": task.created_at,
+            "rpm": item_rpm,
+            "tpm": item_tpm,
+            "success_rate": item_success_rate,
+        })
+
+    sources = metric_sources or fallback_metric_sources[:12]
+    rpm = sum(_num(item.get("rpm")) for item in sources)
+    tpm = sum(_num(item.get("tpm")) for item in sources)
+    success_rates = [
+        _num(item.get("success_rate"))
+        for item in sources
+        if item.get("success_rate") is not None
+    ]
+    p95_values = [
+        _num(item.get("latency_p95"))
+        for item in sources
+        if item.get("latency_p95") is not None
+    ]
+
+    return {
+        "generated_at": datetime.utcnow(),
+        "total": total,
+        "active_tasks": active_tasks,
+        "metrics": {
+            "rpm": round(rpm, 4),
+            "tpm": round(tpm, 4),
+            "success_rate": round(sum(success_rates) / len(success_rates), 4) if success_rates else None,
+            "latency_p95": round(max(p95_values), 4) if p95_values else None,
+        },
+        "status_counts": status_counts,
+        "protocol_counts": protocol_counts,
+        "model_counts": dict(sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
+        "error_counts": dict(sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
+        "recent_tasks": recent_tasks[:8],
+    }
 
 
 @router.get("/{task_id}", response_model=TestTaskOut)

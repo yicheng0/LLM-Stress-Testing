@@ -1,5 +1,6 @@
 <template>
-  <el-container class="app-shell">
+  <router-view v-if="isPrintLayout" />
+  <el-container v-else class="app-shell">
     <el-aside class="sidebar" width="236px">
       <div class="brand">
         <img class="brand-logo" src="https://wenwen-us.oss-us-west-1.aliyuncs.com/apipro_logo.png" alt="APIPro" />
@@ -82,6 +83,7 @@ import packageInfo from '../package.json'
 const route = useRoute()
 const router = useRouter()
 const appVersion = packageInfo.version
+const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
 
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'

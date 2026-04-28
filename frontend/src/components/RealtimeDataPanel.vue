@@ -9,6 +9,11 @@
         <el-tag :type="activeTasks.length ? 'success' : 'info'" effect="plain">
           {{ activeTasks.length ? '实时运行中' : '暂无运行任务' }}
         </el-tag>
+        <el-segmented v-model="windowSize" :options="windowOptions" />
+        <el-button :icon="paused ? VideoPlay : VideoPause" @click="paused = !paused">
+          {{ paused ? '继续刷新' : '暂停刷新' }}
+        </el-button>
+        <el-button :icon="FullScreen" @click="toggleFullscreen">大屏模式</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
       </div>
     </div>
@@ -57,7 +62,11 @@
             <h3>最近测试任务</h3>
             <span>按创建时间排序</span>
           </div>
-          <div v-if="!items.length && !loading" class="empty-state">暂无测试数据</div>
+          <div v-if="!items.length && !loading" class="empty-state">
+            <strong>暂无测试数据</strong>
+            <span>启动一次压测后，这里会展示实时吞吐、成功率和协议分布。</span>
+            <el-button type="primary" @click="router.push('/tests/new')">新建测试</el-button>
+          </div>
           <div v-else class="activity-list">
             <button
               v-for="item in recentItems"
@@ -87,14 +96,22 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { DataAnalysis, Histogram, Refresh, TrendCharts } from '@element-plus/icons-vue'
-import { listTests } from '../api/client'
+import { DataAnalysis, FullScreen, Histogram, Refresh, TrendCharts, VideoPause, VideoPlay } from '@element-plus/icons-vue'
+import { getRealtimeDashboard } from '../api/client'
 
 const router = useRouter()
 const loading = ref(false)
 const items = ref([])
 const total = ref(0)
 const samples = ref([])
+const dashboard = ref(null)
+const paused = ref(false)
+const windowSize = ref(30)
+const windowOptions = [
+  { label: '1 分钟', value: 20 },
+  { label: '3 分钟', value: 60 },
+  { label: '5 分钟', value: 100 }
+]
 const trendEl = ref()
 const statusEl = ref()
 const protocolEl = ref()
@@ -107,28 +124,20 @@ const activeStatuses = ['queued', 'running', 'stopping']
 const activeTasks = computed(() => items.value.filter((item) => activeStatuses.includes(item.status)))
 const recentItems = computed(() => items.value.slice(0, 6))
 const aggregate = computed(() => {
-  const running = items.value.filter((item) => item.status === 'running')
-  const source = running.length ? running : items.value.slice(0, 12)
-  const rpm = source.reduce((sum, item) => sum + numeric(item.progress?.current_rpm ?? item.summary?.results?.rpm), 0)
-  const tpm = source.reduce((sum, item) => sum + numeric(item.progress?.current_tpm ?? item.summary?.results?.total_tpm), 0)
-  const successRates = source
-    .map((item) => numeric(item.progress?.success_rate ?? item.summary?.results?.success_rate, null))
-    .filter((value) => value !== null)
-  const successRate = successRates.length
-    ? successRates.reduce((sum, value) => sum + value, 0) / successRates.length
-    : null
-  const p95Values = source
-    .map((item) => numeric(item.summary?.results?.latency_sec?.p95, null))
-    .filter((value) => value !== null)
-  const p95 = p95Values.length ? Math.max(...p95Values) : null
-  return { rpm, tpm, successRate, p95 }
+  const metrics = dashboard.value?.metrics || {}
+  return {
+    rpm: numeric(metrics.rpm),
+    tpm: numeric(metrics.tpm),
+    successRate: numeric(metrics.success_rate, null),
+    p95: numeric(metrics.latency_p95, null)
+  }
 })
 
 const metricCards = computed(() => [
   {
     label: '活跃任务',
-    value: number(activeTasks.value.length),
-    sub: `最近 ${number(items.value.length)} 条任务`,
+    value: number(dashboard.value?.active_tasks ?? activeTasks.value.length),
+    sub: `历史 ${number(total.value)} 条任务`,
     icon: DataAnalysis,
     tone: 'blue'
   },
@@ -156,10 +165,12 @@ const metricCards = computed(() => [
 ])
 
 async function loadData() {
+  if (paused.value) return
   loading.value = true
   try {
-    const data = await listTests({ page: 1, page_size: 100 })
-    items.value = data.items || []
+    const data = await getRealtimeDashboard()
+    dashboard.value = data
+    items.value = data.recent_tasks || []
     total.value = data.total || 0
     pushSample()
   } finally {
@@ -174,7 +185,7 @@ function pushSample() {
     second: '2-digit'
   }).format(new Date())
   samples.value = [
-    ...samples.value.slice(-29),
+    ...samples.value.slice(-(Number(windowSize.value) - 1)),
     {
       time: now,
       rpm: Math.round(aggregate.value.rpm * 100) / 100,
@@ -239,7 +250,7 @@ function statusOption() {
       type: 'pie',
       radius: ['48%', '72%'],
       center: ['50%', '43%'],
-      data: Object.entries(countBy(items.value, 'status')).map(([key, value]) => ({
+      data: Object.entries(dashboard.value?.status_counts || countBy(items.value, 'status')).map(([key, value]) => ({
         name: names[key] || key,
         value,
         itemStyle: { color: colors[key] || '#64748b' }
@@ -249,7 +260,7 @@ function statusOption() {
 }
 
 function protocolOption() {
-  const counts = countBy(items.value, 'api_protocol')
+  const counts = dashboard.value?.protocol_counts || countBy(items.value, 'api_protocol')
   const labels = ['openai', 'anthropic', 'gemini']
   return {
     color: ['#2563eb', '#f97316', '#16a34a'],
@@ -289,7 +300,18 @@ function goTask(item) {
 }
 
 function rpmOf(item) {
-  return number(item.progress?.current_rpm ?? item.summary?.results?.rpm)
+  return number(item.rpm ?? item.progress?.current_rpm ?? item.summary?.results?.rpm)
+}
+
+async function toggleFullscreen() {
+  const element = document.querySelector('.realtime-panel')
+  if (!document.fullscreenElement && element?.requestFullscreen) {
+    await element.requestFullscreen()
+    return
+  }
+  if (document.fullscreenElement && document.exitFullscreen) {
+    await document.exitFullscreen()
+  }
 }
 
 function protocolText(protocol) {
@@ -522,9 +544,76 @@ onBeforeUnmount(() => {
 }
 
 .empty-state {
-  padding: 54px 18px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 44px 18px;
   color: #64748b;
   text-align: center;
+}
+
+.empty-state strong {
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.empty-state span {
+  max-width: 320px;
+  line-height: 1.6;
+}
+
+.realtime-panel:fullscreen {
+  margin: 0;
+  min-height: 100vh;
+  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(37, 99, 235, 0.22), transparent 30%),
+    radial-gradient(circle at 88% 16%, rgba(249, 115, 22, 0.16), transparent 28%),
+    #07111f;
+  color: #e5eefb;
+}
+
+.realtime-panel:fullscreen .section-header {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.realtime-panel:fullscreen .section-title,
+.realtime-panel:fullscreen .tile-header h3,
+.realtime-panel:fullscreen .empty-state strong {
+  color: #f8fafc;
+}
+
+.realtime-panel:fullscreen .panel-subtitle,
+.realtime-panel:fullscreen .tile-header span,
+.realtime-panel:fullscreen .activity-main span,
+.realtime-panel:fullscreen .activity-metric span,
+.realtime-panel:fullscreen .empty-state {
+  color: #94a3b8;
+}
+
+.realtime-panel:fullscreen .section-body {
+  background: transparent;
+}
+
+.realtime-panel:fullscreen .chart-tile,
+.realtime-panel:fullscreen .activity-tile {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.76);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+}
+
+.realtime-panel:fullscreen .activity-row {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5eefb;
+}
+
+.realtime-panel:fullscreen .activity-row:hover {
+  border-color: rgba(59, 130, 246, 0.72);
+  background: rgba(30, 41, 59, 0.86);
 }
 
 @media (max-width: 1180px) {

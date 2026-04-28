@@ -9,6 +9,7 @@
     />
 
     <MetricCards :items="metricItems" />
+    <RunDiagnostics :progress="progress" :logs="logs" :socket-status="socketStatus" />
 
     <div class="run-grid">
       <div class="section">
@@ -45,6 +46,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import LogStream from '../components/LogStream.vue'
 import MetricCards from '../components/MetricCards.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
+import RunDiagnostics from '../components/RunDiagnostics.vue'
 import { createProgressSocket, getTest, stopTest } from '../api/client'
 
 const props = defineProps({

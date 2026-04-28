@@ -40,6 +40,33 @@
       </div>
     </div>
 
+    <div class="section" v-if="report">
+      <div class="section-header">
+        <h2 class="section-title">测试结论</h2>
+        <el-tag :type="reportConclusion.type" effect="plain">{{ reportConclusion.label }}</el-tag>
+      </div>
+      <div class="section-body">
+        <div class="conclusion-grid">
+          <div v-for="item in conclusionItems" :key="item.label" class="conclusion-card" :class="item.type">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <em>{{ item.hint }}</em>
+          </div>
+        </div>
+        <div class="conclusion-list">
+          <el-alert
+            v-for="item in conclusionAdvice"
+            :key="item.title"
+            :title="item.title"
+            :description="item.description"
+            :type="item.type"
+            show-icon
+            :closable="false"
+          />
+        </div>
+      </div>
+    </div>
+
     <template v-if="isMatrix">
       <MetricCards :items="matrixMetricItems" />
       <ChartPanel title="矩阵结果热力图" :option="matrixHeatmapOption">
@@ -258,6 +285,94 @@ const matrixMetricItems = computed(() => {
     { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值', color: '#16a34a' },
     { label: '最低 P95', value: minP95 === Infinity ? '-' : seconds(minP95), sub: '延迟最优点', color: '#334155' }
   ]
+})
+
+const reportConclusion = computed(() => {
+  if (isMatrix.value) return matrixConclusion.value
+  const successRate = Number(results.value.success_rate || 0)
+  const p95 = Number(results.value.latency_sec_p95 || 0)
+  if (successRate < 0.95) return { label: '不稳定', type: 'danger' }
+  if (successRate < 0.99 || p95 >= 10) return { label: '需要优化', type: 'warning' }
+  return { label: '表现稳定', type: 'success' }
+})
+const matrixConclusion = computed(() => {
+  const successRates = matrixPoints.value.map((item) => Number(item.success_rate || 0))
+  const minSuccess = Math.min(...successRates, 1)
+  const p95Values = matrixPoints.value.map((item) => Number(item.latency_p95 || 0)).filter(Boolean)
+  const maxP95 = Math.max(...p95Values, 0)
+  if (minSuccess < 0.95) return { label: '部分测试点不稳定', type: 'danger' }
+  if (minSuccess < 0.99 || maxP95 >= 10) return { label: '存在优化空间', type: 'warning' }
+  return { label: '矩阵表现稳定', type: 'success' }
+})
+const conclusionItems = computed(() => {
+  if (isMatrix.value) {
+    const bestTpmPoint = [...matrixPoints.value].sort((a, b) => Number(b.total_tpm || 0) - Number(a.total_tpm || 0))[0]
+    const bestLatencyPoint = [...matrixPoints.value]
+      .filter((item) => item.latency_p95 !== undefined && item.latency_p95 !== null)
+      .sort((a, b) => Number(a.latency_p95 || Infinity) - Number(b.latency_p95 || Infinity))[0]
+    return [
+      { label: '最佳吞吐点', value: bestTpmPoint ? `${number(bestTpmPoint.input_tokens)} / ${number(bestTpmPoint.concurrency)}` : '-', hint: `TPM ${number(bestTpmPoint?.total_tpm)}`, type: 'ok' },
+      { label: '最低 P95 点', value: bestLatencyPoint ? `${number(bestLatencyPoint.input_tokens)} / ${number(bestLatencyPoint.concurrency)}` : '-', hint: seconds(bestLatencyPoint?.latency_p95), type: 'ok' },
+      { label: '测试点数', value: number(summary.value.test_points), hint: '矩阵组合数量', type: 'ok' },
+      { label: '结论', value: reportConclusion.value.label, hint: '综合成功率和尾延迟', type: reportConclusion.value.type }
+    ]
+  }
+  return [
+    { label: '稳定性', value: percent(results.value.success_rate), hint: `失败 ${number(results.value.failed_requests)}`, type: Number(results.value.success_rate || 0) >= 0.99 ? 'ok' : 'warning' },
+    { label: '尾延迟', value: seconds(results.value.latency_sec_p95), hint: `P99 ${seconds(results.value.latency_sec_p99)}`, type: Number(results.value.latency_sec_p95 || 0) >= 10 ? 'warning' : 'ok' },
+    { label: '吞吐', value: number(results.value.total_tpm), hint: `RPM ${number(results.value.rpm)}`, type: 'ok' },
+    { label: '瓶颈判断', value: bottleneckText.value, hint: '由 TTFT/Decode 占比估算', type: 'ok' }
+  ]
+})
+const bottleneckText = computed(() => {
+  const latency = Number(results.value.latency_sec_avg || 0)
+  const ttft = Number(results.value.ttft_sec_avg || 0)
+  const decode = Number(results.value.decode_sec_avg || 0)
+  if (!latency) return '-'
+  if (ttft / latency >= 0.55) return 'Prefill / 排队'
+  if (decode / latency >= 0.55) return 'Decode'
+  return '混合瓶颈'
+})
+const conclusionAdvice = computed(() => {
+  const items = []
+  if (isMatrix.value) {
+    const unstable = matrixPoints.value.filter((item) => Number(item.success_rate || 0) < 0.99)
+    if (unstable.length) {
+      items.push({
+        title: '矩阵中存在成功率偏低的测试点',
+        description: '建议重点对比这些测试点的并发、输入 Token 和错误分布，确认是限流还是模型容量不足。',
+        type: 'warning'
+      })
+    }
+    items.push({
+      title: '优先选择稳定吞吐点作为容量基线',
+      description: '不要只看最高 TPM，建议同时要求成功率接近 99% 且 P95/P99 可接受。',
+      type: 'info'
+    })
+    return items
+  }
+  if (Number(results.value.success_rate || 0) < 0.99) {
+    items.push({
+      title: '成功率未达到 99%',
+      description: '建议查看错误分布和请求明细，优先排查限流、认证、超时和 5xx。',
+      type: 'warning'
+    })
+  }
+  if (Number(results.value.latency_sec_p95 || 0) >= 10) {
+    items.push({
+      title: 'P95 延迟偏高',
+      description: '建议结合 TTFT / Decode 图判断是输入预填充、输出解码还是队列等待导致。',
+      type: 'warning'
+    })
+  }
+  if (!items.length) {
+    items.push({
+      title: '本次测试结果较稳定',
+      description: '可以将当前并发和 Token 配置作为基线，再通过矩阵测试探索容量边界。',
+      type: 'success'
+    })
+  }
+  return items
 })
 
 const latencyRows = computed(() => [
@@ -521,6 +636,15 @@ function formatMetricValue(value, field, compact = false) {
 }
 
 function openDownload(kind) {
+  if (kind === 'pdf') {
+    const url = router.resolve({
+      name: 'test-report-print',
+      params: { id: props.id },
+      query: { autoprint: '1' }
+    }).href
+    window.open(url, '_blank')
+    return
+  }
   window.open(downloadUrl(props.id, kind), '_blank')
 }
 

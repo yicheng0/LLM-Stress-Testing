@@ -63,6 +63,39 @@
         <el-form-item :label="apiKeyLabel" prop="api_key" class="full-row">
           <el-input v-model="form.api_key" type="password" show-password autocomplete="off" />
         </el-form-item>
+        <div class="protocol-preview full-row" :class="{ warning: endpointMismatch }">
+          <div class="preview-head">
+            <div>
+              <strong>协议请求预览</strong>
+              <span>{{ endpointMismatch ? '当前 Endpoint 与所选协议常用路径不一致，请确认是否为自定义兼容接口。' : '启动前请确认 Header 和 Endpoint 是否符合目标服务。' }}</span>
+            </div>
+            <el-tag :type="endpointMismatch ? 'warning' : 'success'" effect="plain">
+              {{ endpointMismatch ? '需要确认' : '配置匹配' }}
+            </el-tag>
+          </div>
+          <div class="preview-grid">
+            <div>
+              <span>Method</span>
+              <code>POST</code>
+            </div>
+            <div>
+              <span>Resolved Endpoint</span>
+              <code>{{ resolvedEndpoint }}</code>
+            </div>
+            <div>
+              <span>Auth Header</span>
+              <code>{{ selectedProtocol.auth }}</code>
+            </div>
+            <div v-if="form.api_protocol === 'anthropic'">
+              <span>Anthropic Version</span>
+              <code>{{ form.anthropic_version }}</code>
+            </div>
+            <div>
+              <span>Stream</span>
+              <code>{{ form.enable_stream ? 'enabled' : 'disabled' }}</code>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -258,7 +291,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ChatLineRound, Check, Connection, Cpu, Document, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
 
-const emit = defineEmits(['submit'])
+const emit = defineEmits(['submit', 'change'])
 
 const props = defineProps({
   submitting: {
@@ -384,6 +417,14 @@ const selectedProtocol = computed(() => (
   protocolOptions.find((item) => item.value === form.api_protocol) || protocolOptions[0]
 ))
 const protocolText = computed(() => selectedProtocol.value.label)
+const resolvedEndpoint = computed(() => String(form.endpoint || '').replace('{model}', form.model || '{model}'))
+const endpointMismatch = computed(() => {
+  const expected = endpointFor(form.api_protocol)
+  if (!form.endpoint || !expected) return false
+  if (form.endpoint === expected) return false
+  if (form.api_protocol === 'openai' && form.endpoint === '/responses') return false
+  return isKnownEndpoint(form.endpoint)
+})
 const matrixPointCount = computed(() => {
   if (!form.matrix_mode) return 1
   const inputs = matrixInputValues.value
@@ -541,6 +582,12 @@ watch(
   }
 )
 
+watch(
+  form,
+  () => emit('change', { ...form }),
+  { deep: true, immediate: true }
+)
+
 function applyTokenPreset(value) {
   form.input_tokens = Number(value)
 }
@@ -589,6 +636,74 @@ function reset() {
   color: #64748b;
   font-family: "Fira Code", Consolas, monospace;
   font-size: 12px;
+}
+
+.protocol-preview {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+}
+
+.protocol-preview.warning {
+  border-color: #fed7aa;
+  background: linear-gradient(180deg, #fffaf3 0%, #fff7ed 100%);
+}
+
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preview-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.preview-head strong {
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.preview-head span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preview-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.preview-grid span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.preview-grid code {
+  overflow: hidden;
+  color: #1e293b;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .form-actions {
@@ -928,6 +1043,10 @@ function reset() {
   .provider-grid {
     grid-template-columns: 1fr;
   }
+
+  .preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -942,6 +1061,10 @@ function reset() {
   .form-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .preview-grid {
+    grid-template-columns: 1fr;
   }
 
   .action-buttons,
