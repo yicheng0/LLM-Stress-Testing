@@ -186,6 +186,16 @@
               <strong>{{ form.matrix_mode ? estimatedMatrixTokenRangeText : number(estimatedTokensPerRequest) }}</strong>
               <em>输入 + 最大输出</em>
             </div>
+            <div>
+              <span>预计请求数</span>
+              <strong>{{ estimatedRequestCountText }}</strong>
+              <em>{{ form.matrix_mode ? '矩阵所有测试点' : '当前测试时长内' }}</em>
+            </div>
+            <div>
+              <span>预计总 Token</span>
+              <strong>{{ estimatedTotalTokensText }}</strong>
+              <em>{{ form.matrix_mode ? '按矩阵区间粗估' : '请求数 x 单请求 Token' }}</em>
+            </div>
           </div>
           <el-alert
             class="estimate-note"
@@ -276,7 +286,7 @@
                   :disabled="form.matrix_mode"
                 />
               </el-form-item>
-              <el-form-item label="建议测试时长">
+              <el-form-item label="应用后测试时长">
                 <el-input-number
                   v-model="targetEstimate.durationSec"
                   :min="1"
@@ -305,8 +315,8 @@
               </div>
               <div>
                 <span>预计总 Token</span>
-                <strong>{{ targetTotalTokensText }}</strong>
-                <em>{{ targetEstimatedRequestsText }} 请求</em>
+                <strong>{{ estimatedTotalTokensText }}</strong>
+                <em>{{ estimatedRequestCountText }} 请求，跟随上方真实配置</em>
               </div>
             </div>
             <div class="target-result">
@@ -845,6 +855,10 @@ const estimatedSingleRpm = computed(() => {
 })
 const estimatedSingleTpm = computed(() => estimatedSingleRpm.value * estimatedTokensPerRequest.value)
 const estimatedSingleTps = computed(() => estimatedSingleTpm.value / 60)
+const estimatedSingleRequestCount = computed(() => (
+  estimatedSingleRpm.value * Number(form.duration_sec || 0) / 60
+))
+const estimatedSingleTotalTokens = computed(() => estimatedSingleRequestCount.value * estimatedTokensPerRequest.value)
 const estimatedMatrixRpmRange = computed(() => {
   if (!matrixConcurrencyValues.value.length) return [0, 0]
   const values = matrixConcurrencyValues.value.map((item) => item / effectiveAssumedLatencySec.value * 60)
@@ -857,6 +871,21 @@ const estimatedMatrixTpmRange = computed(() => {
   return [minRpm * Math.min(...tokenValues), maxRpm * Math.max(...tokenValues)]
 })
 const estimatedMatrixTpsRange = computed(() => estimatedMatrixTpmRange.value.map((item) => item / 60))
+const estimatedMatrixRequestCount = computed(() => (
+  matrixConcurrencyValues.value.reduce((sum, concurrency) => (
+    sum + (concurrency / effectiveAssumedLatencySec.value * 60) * Number(form.matrix_duration_sec || 0) / 60 * matrixInputValues.value.length
+  ), 0)
+))
+const estimatedMatrixTotalTokens = computed(() => {
+  if (!matrixInputValues.value.length || !matrixConcurrencyValues.value.length) return 0
+  return matrixInputValues.value.reduce((sum, inputTokens) => (
+    sum + matrixConcurrencyValues.value.reduce((innerSum, concurrency) => {
+      const rpm = concurrency / effectiveAssumedLatencySec.value * 60
+      const requests = rpm * Number(form.matrix_duration_sec || 0) / 60
+      return innerSum + requests * (inputTokens + Number(form.max_output_tokens || 0))
+    }, 0)
+  ), 0)
+})
 const estimatedMatrixTokenRange = computed(() => {
   if (!matrixInputValues.value.length) return [0, 0]
   const tokenValues = matrixInputValues.value.map((item) => item + Number(form.max_output_tokens || 0))
@@ -877,6 +906,12 @@ const estimatedTpmText = computed(() => (
 ))
 const estimatedTpsText = computed(() => (
   form.matrix_mode ? rangeText(estimatedMatrixTpsRange.value) : number(estimatedSingleTps.value)
+))
+const estimatedRequestCountText = computed(() => (
+  number(form.matrix_mode ? estimatedMatrixRequestCount.value : estimatedSingleRequestCount.value)
+))
+const estimatedTotalTokensText = computed(() => (
+  compactNumber(form.matrix_mode ? estimatedMatrixTotalTokens.value : estimatedSingleTotalTokens.value)
 ))
 const targetRpm = computed(() => {
   if (targetEstimate.mode === 'tpm') {
@@ -906,8 +941,6 @@ const targetTpm = computed(() => (
     : targetRpm.value * targetTokensPerRequest.value
 ))
 const targetTps = computed(() => targetTpm.value / 60)
-const targetEstimatedRequests = computed(() => targetRpm.value * Number(targetEstimate.durationSec || 0) / 60)
-const targetTotalTokens = computed(() => targetEstimatedRequests.value * targetTokensPerRequest.value)
 const targetRpmText = computed(() => number(targetRpm.value))
 const targetConcurrencyText = computed(() => {
   const concurrency = targetConcurrency.value
@@ -916,8 +949,6 @@ const targetConcurrencyText = computed(() => {
 })
 const targetTpmText = computed(() => number(targetTpm.value))
 const targetTpsText = computed(() => number(targetTps.value))
-const targetEstimatedRequestsText = computed(() => number(targetEstimatedRequests.value))
-const targetTotalTokensText = computed(() => compactNumber(targetTotalTokens.value))
 const targetExplanation = computed(() => (
   `${number(targetConcurrency.value)} 并发打 ${number(targetRpm.value)} RPM`
 ))
@@ -952,7 +983,8 @@ const targetRiskItems = computed(() => {
       type: 'info'
     })
   }
-  if (targetTotalTokens.value >= 100000000) {
+  const estimatedTotalTokens = form.matrix_mode ? estimatedMatrixTotalTokens.value : estimatedSingleTotalTokens.value
+  if (estimatedTotalTokens >= 100000000) {
     items.push({
       title: '预计总 Token 消耗较大',
       description: '启动前请确认账号配额、预算和目标 API 的限流策略。',
@@ -968,8 +1000,8 @@ const expectedMetrics = computed(() => {
   const duration = form.matrix_mode
     ? matrixPointCount.value * Number(form.matrix_duration_sec || 0)
     : Number(form.duration_sec || 0)
-  const requests = rpm === null ? null : rpm * duration / 60
-  const tokens = requests === null ? null : requests * estimatedTokensPerRequest.value
+  const requests = form.matrix_mode ? estimatedMatrixRequestCount.value : estimatedSingleRequestCount.value
+  const tokens = form.matrix_mode ? estimatedMatrixTotalTokens.value : estimatedSingleTotalTokens.value
   return {
     mode: form.matrix_mode ? 'matrix_estimate' : targetEstimate.mode,
     expected_rpm: rpm,
@@ -1116,6 +1148,52 @@ watch(
       form.endpoint = endpointFor('gemini', enabled)
     }
   }
+)
+
+watch(
+  () => form.duration_sec,
+  (value) => {
+    if (form.matrix_mode) return
+    targetEstimate.durationSec = Number(value || 60)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => form.input_tokens,
+  (value) => {
+    if (form.matrix_mode) return
+    targetEstimate.inputTokens = Number(value || 1)
+    syncTokenPreset()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => form.max_output_tokens,
+  (value) => {
+    if (form.matrix_mode) return
+    targetEstimate.outputTokens = Number(value || 1)
+  },
+  { immediate: true }
+)
+
+watch(
+  estimatedSingleRpm,
+  (value) => {
+    if (form.matrix_mode || targetEstimate.mode !== 'rpm') return
+    targetEstimate.rpm = Math.max(1, Math.round(Number(value || 1)))
+  },
+  { immediate: true }
+)
+
+watch(
+  estimatedSingleTpm,
+  (value) => {
+    if (form.matrix_mode || targetEstimate.mode !== 'tpm') return
+    targetEstimate.tpm = Math.max(1, Math.round(Number(value || 1)))
+  },
+  { immediate: true }
 )
 
 watch(
