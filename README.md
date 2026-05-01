@@ -66,6 +66,16 @@ With backend and frontend running:
 
 The smoke check verifies expected files/directories, backend health, test listing, and frontend reachability without creating a load-test task.
 
+## Versioned Commit Workflow
+
+After finishing a feature, stage only the source files that should be committed, then use the versioned commit script:
+
+```powershell
+git add frontend\src\components\ConfigForm.vue backend\app\models\schemas.py README.md
+.\scripts\commit_with_version.ps1 -Message "Add beginner load estimator"
+```
+
+The script bumps the patch version, syncs the frontend package files and backend API version, then creates the commit. Do not stage logs, `results/`, `frontend/dist/`, or `__pycache__/` files.
 ## CLI Example
 
 ```powershell

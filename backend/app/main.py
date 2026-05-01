@@ -13,6 +13,7 @@ from backend.app.core.progress import ProgressHub
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import init_db
+from backend.app.version import APP_VERSION
 
 repository = Repository()
 progress_hub = ProgressHub()
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="LLM API 性能测试平台", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="LLM API 性能测试平台", version=APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
