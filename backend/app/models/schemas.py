@@ -88,6 +88,9 @@ class ReportOut(BaseModel):
     charts: dict[str, Any] | None = None
     files: dict[str, str | None]
     events: list[EventOut]
+    completed_at: datetime | None = None
+    expires_at: datetime | None = None
+    retention_hours: int
 
 
 class DetailsOut(BaseModel):

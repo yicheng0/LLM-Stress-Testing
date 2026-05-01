@@ -53,6 +53,15 @@
       </div>
     </div>
     <div class="section-body">
+      <div class="retention-banner">
+        <div>
+          <strong>结果保留策略</strong>
+          <span>{{ retentionSummary }}</span>
+        </div>
+        <el-tag :type="expiredCount ? 'warning' : 'success'" effect="plain">
+          {{ expiredCount ? `${expiredCount} 条已过期` : '当前无过期数据' }}
+        </el-tag>
+      </div>
       <HistoryTable
         :items="store.items"
         :loading="store.loading"
@@ -91,6 +100,19 @@ const createdRange = ref([])
 const selectedRows = ref([])
 const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4)
 const canExport = computed(() => selectedRows.value.length === 1)
+const expiredCount = computed(() => store.items.filter((item) => isExpired(item)).length)
+const retentionSummary = computed(() => {
+  const nextExpiry = store.items
+    .map((item) => item.expires_at || item.result_expires_at)
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .filter((value) => Number.isFinite(value.getTime()) && value.getTime() > Date.now())
+    .sort((a, b) => a.getTime() - b.getTime())[0]
+  if (nextExpiry) {
+    return `报告、明细和事件按后端保留策略自动到期；最近一条将在 ${formatTime(nextExpiry)} 过期。`
+  }
+  return '报告、明细和事件仅用于测试诊断；到期后可点击“清理过期”删除本地数据。'
+})
 
 function reload() {
   store.page = 1
@@ -195,6 +217,21 @@ function exportSelectedReport(kind) {
   window.open(downloadUrl(row.id, kind), '_blank')
 }
 
+function isExpired(row) {
+  const value = row.expires_at || row.result_expires_at
+  if (!value) return false
+  return new Date(value).getTime() <= Date.now()
+}
+
+function formatTime(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value))
+}
+
 onMounted(() => {
   store.fetchHistory()
 })
@@ -205,5 +242,39 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+.retention-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.retention-banner div {
+  display: grid;
+  gap: 5px;
+}
+
+.retention-banner strong {
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.retention-banner span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .retention-banner {
+    flex-direction: column;
+  }
 }
 </style>

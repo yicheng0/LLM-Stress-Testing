@@ -77,6 +77,92 @@
       </div>
     </div>
 
+    <div class="grid-2 report-grid" v-if="report">
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">容量推荐</h2>
+          <el-tag :type="capacityRecommendation.type" effect="plain">{{ capacityRecommendation.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="recommendation-grid">
+            <div v-for="item in capacityCards" :key="item.label" class="recommendation-card" :class="item.type">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.description }}</em>
+            </div>
+          </div>
+          <el-alert
+            class="report-alert"
+            :title="capacityRecommendation.title"
+            :description="capacityRecommendation.description"
+            :type="capacityRecommendation.type"
+            show-icon
+            :closable="false"
+          />
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">客户版摘要</h2>
+          <el-button :icon="CopyDocument" @click="copyCustomerSummary">复制摘要</el-button>
+        </div>
+        <div class="section-body">
+          <div class="customer-summary">
+            <p v-for="line in customerSummaryLines" :key="line">{{ line }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2 report-grid" v-if="report">
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">敏感信息审计</h2>
+          <el-tag :type="securityAudit.statusType" effect="plain">{{ securityAudit.status }}</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="audit-list">
+            <div v-for="item in securityAudit.items" :key="item.label" class="audit-item" :class="item.type">
+              <strong>{{ item.label }}</strong>
+              <span>{{ item.description }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">数据保留策略</h2>
+          <el-tag :type="retentionInfo.type" effect="plain">{{ retentionInfo.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="retention-panel">
+            <div>
+              <span>保留时长</span>
+              <strong>{{ retentionHoursText }}</strong>
+            </div>
+            <div>
+              <span>完成时间</span>
+              <strong>{{ report?.completed_at ? formatTime(report.completed_at) : '-' }}</strong>
+            </div>
+            <div>
+              <span>预计过期</span>
+              <strong>{{ report?.expires_at ? formatTime(report.expires_at) : '-' }}</strong>
+            </div>
+          </div>
+          <el-alert
+            class="report-alert"
+            title="报告、明细和事件只用于本次测试诊断"
+            :description="retentionInfo.description"
+            type="info"
+            show-icon
+            :closable="false"
+          />
+        </div>
+      </div>
+    </div>
+
     <template v-if="isMatrix">
       <MetricCards :items="matrixMetricItems" />
       <ChartPanel title="矩阵结果热力图" :option="matrixHeatmapOption">
@@ -315,6 +401,79 @@ const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
 const expectedMetrics = computed(() => config.value.expected_metrics || summary.value?.config?.expected_metrics || null)
 const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
+const stableMatrixPoints = computed(() => matrixPoints.value.filter((item) => (
+  Number(item.success_rate || 0) >= 0.99 && Number(item.latency_p95 || 0) > 0
+)))
+const bestStableMatrixPoint = computed(() => {
+  const candidates = stableMatrixPoints.value.length ? stableMatrixPoints.value : matrixPoints.value
+  return [...candidates].sort((a, b) => Number(b.total_tpm || 0) - Number(a.total_tpm || 0))[0] || null
+})
+const capacityRecommendation = computed(() => {
+  if (isMatrix.value) {
+    const point = bestStableMatrixPoint.value
+    if (!point) {
+      return {
+        label: '暂无建议',
+        title: '缺少矩阵测试点',
+        description: '矩阵结果为空，无法给出容量基线。',
+        type: 'info'
+      }
+    }
+    const stable = stableMatrixPoints.value.includes(point)
+    return {
+      label: stable ? '可作为基线' : '需降压复测',
+      title: stable ? '推荐使用最佳稳定点作为容量基线' : '最高吞吐点稳定性不足',
+      description: stable
+        ? `建议以 ${number(point.input_tokens)} 输入 Token、${number(point.concurrency)} 并发作为当前模型容量基线，约 ${number(point.rpm)} RPM / ${number(point.total_tpm)} TPM。`
+        : `当前矩阵没有达到 99% 成功率且 P95 可参考的稳定点，建议降低并发或缩短输入 Token 后复测。`,
+      type: stable ? 'success' : 'warning'
+    }
+  }
+  const successRate = Number(results.value.success_rate || 0)
+  const p95 = Number(results.value.latency_sec_p95 || 0)
+  const failed = Number(results.value.failed_requests || 0)
+  if (successRate < 0.95 || failed > 0 && successRate < 0.98) {
+    return {
+      label: '不建议参考',
+      title: '本次容量结果不适合作为生产参考',
+      description: '成功率偏低，优先排查限流、认证、超时或服务端错误；建议降并发复测后再给容量口径。',
+      type: 'danger'
+    }
+  }
+  if (successRate < 0.99 || p95 >= 10) {
+    return {
+      label: '需降压',
+      title: '建议降低目标压力后作为基线',
+      description: `可先按当前实测的 70% 作为保守目标，即约 ${number(safeRpm.value)} RPM / ${number(safeTpm.value)} TPM，再逐步上探。`,
+      type: 'warning'
+    }
+  }
+  return {
+    label: '可作为基线',
+    title: '当前结果可作为小流量容量基线',
+    description: `建议以约 ${number(safeRpm.value)} RPM / ${number(safeTpm.value)} TPM 作为保守起点，并通过矩阵测试继续确认边界。`,
+    type: 'success'
+  }
+})
+const safeRpm = computed(() => Number(results.value.rpm || 0) * 0.8)
+const safeTpm = computed(() => Number(results.value.total_tpm || 0) * 0.8)
+const capacityCards = computed(() => {
+  if (isMatrix.value) {
+    const point = bestStableMatrixPoint.value
+    return [
+      { label: '推荐并发', value: number(point?.concurrency), description: `输入 Token ${number(point?.input_tokens)}`, type: capacityRecommendation.value.type },
+      { label: '推荐 RPM', value: number(point?.rpm), description: '优先选择稳定点，不只看峰值', type: 'ok' },
+      { label: '推荐 TPM', value: number(point?.total_tpm), description: `成功率 ${percent(point?.success_rate)}`, type: 'ok' },
+      { label: '尾延迟 P95', value: seconds(point?.latency_p95), description: '作为容量口径的延迟参考', type: Number(point?.latency_p95 || 0) >= 10 ? 'warning' : 'ok' }
+    ]
+  }
+  return [
+    { label: '保守 RPM', value: number(safeRpm.value), description: `实测 ${number(results.value.rpm)} 的 80%`, type: capacityRecommendation.value.type },
+    { label: '保守 TPM', value: number(safeTpm.value), description: `实测 ${number(results.value.total_tpm)} 的 80%`, type: capacityRecommendation.value.type },
+    { label: '建议并发', value: number(Math.max(1, Math.floor(Number(config.value.concurrency || 1) * 0.8))), description: `本次并发 ${number(config.value.concurrency)}`, type: 'ok' },
+    { label: '稳定性', value: percent(results.value.success_rate), description: `P95 ${seconds(results.value.latency_sec_p95)}`, type: Number(results.value.success_rate || 0) >= 0.99 ? 'ok' : 'warning' }
+  ]
+})
 const downloadItems = computed(() => [
   { kind: 'html', label: 'HTML 可视化报告' },
   { kind: 'markdown', label: 'Markdown 报告' },
@@ -329,6 +488,80 @@ const metricItems = computed(() => [
   { label: 'RPM', value: number(results.value.rpm), sub: `QPS ${number(results.value.qps)}`, color: '#f97316' },
   { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' }
 ])
+const securityAudit = computed(() => {
+  const serialized = JSON.stringify({
+    config: config.value,
+    events: report.value?.events || [],
+    summary: summary.value
+  })
+  const suspicious = /sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,}|x-api-key["'\s:]+[A-Za-z0-9._-]{12,}/i.test(serialized)
+  return {
+    status: suspicious ? '需复核' : '已脱敏',
+    statusType: suspicious ? 'warning' : 'success',
+    items: [
+      {
+        label: 'API Key',
+        description: suspicious ? '检测到疑似密钥片段，请复核导出文件和事件文本。' : '报告配置中不展示 API Key，复跑配置也会移除密钥。',
+        type: suspicious ? 'warning' : 'ok'
+      },
+      {
+        label: '事件与明细',
+        description: '后端写入结果前会对 Bearer Token、x-api-key 和常见 key 字段做脱敏处理。',
+        type: 'ok'
+      },
+      {
+        label: '导出文件',
+        description: 'HTML、Markdown、Summary 和 Details 仅保留诊断需要的配置、指标和错误摘要。',
+        type: 'ok'
+      }
+    ]
+  }
+})
+const retentionHoursText = computed(() => {
+  const hours = Number(report.value?.retention_hours)
+  if (!Number.isFinite(hours)) return '-'
+  if (hours <= 0) return '完成后立即可清理'
+  if (hours % 24 === 0) return `${hours / 24} 天`
+  return `${hours} 小时`
+})
+const retentionInfo = computed(() => {
+  if (!report.value?.expires_at) {
+    return {
+      label: '等待完成',
+      type: 'info',
+      description: '任务完成后会根据后端 RESULT_RETENTION_HOURS 计算过期时间。'
+    }
+  }
+  const expired = new Date(report.value.expires_at).getTime() <= Date.now()
+  return {
+    label: expired ? '已过期' : '保留中',
+    type: expired ? 'warning' : 'success',
+    description: expired
+      ? '这条数据已超过保留时间，可在历史记录页执行清理过期。'
+      : `到期后可通过历史记录页的清理过期按钮删除报告、明细和相关文件。`
+  }
+})
+const customerSummaryLines = computed(() => {
+  if (isMatrix.value) {
+    const point = bestStableMatrixPoint.value
+    return [
+      `测试目的：评估 ${config.value.model || '-'} 在不同输入 Token 和并发组合下的容量边界。`,
+      `测试配置：矩阵测试共 ${number(summary.value.test_points)} 个测试点，流式模式${config.value.enable_stream ? '开启' : '关闭'}。`,
+      `核心结果：推荐稳定点为 ${number(point?.input_tokens)} 输入 Token / ${number(point?.concurrency)} 并发，约 ${number(point?.rpm)} RPM / ${number(point?.total_tpm)} TPM。`,
+      `瓶颈判断：${capacityRecommendation.value.title}。`,
+      `建议动作：以稳定点作为基线，继续围绕更高并发或更长上下文做小步复测。`,
+      `风险提示：结果仅代表本次网络、账号配额和模型版本条件下的观测值。`
+    ]
+  }
+  return [
+    `测试目的：评估 ${config.value.model || '-'} 在 ${number(config.value.concurrency)} 并发、${number(config.value.input_tokens)} 输入 Token 下的吞吐和延迟表现。`,
+    `测试配置：持续 ${number(effectiveDuration.value)} 秒，流式模式${config.value.enable_stream ? '开启' : '关闭'}，最大输出 ${number(config.value.max_output_tokens)} Token。`,
+    `核心结果：成功率 ${percent(results.value.success_rate)}，实测 ${number(results.value.rpm)} RPM / ${number(results.value.total_tpm)} TPM，P95 延迟 ${seconds(results.value.latency_sec_p95)}。`,
+    `瓶颈判断：${bottleneckText.value}；${capacityRecommendation.value.title}。`,
+    `建议动作：保守容量可先按 ${number(safeRpm.value)} RPM / ${number(safeTpm.value)} TPM 作为起点。`,
+    `风险提示：真实线上容量会受限流、网络、输出长度和模型版本变化影响。`
+  ]
+})
 
 const rpmAchievement = computed(() => achievementRatio(results.value.rpm, expectedMetrics.value?.expected_rpm))
 const tpmAchievement = computed(() => achievementRatio(results.value.total_tpm, expectedMetrics.value?.expected_tpm))
@@ -885,6 +1118,15 @@ function copyRerun() {
   router.push('/tests/new')
 }
 
+async function copyCustomerSummary() {
+  try {
+    await navigator.clipboard.writeText(customerSummaryLines.value.join('\n'))
+    ElMessage.success('已复制客户版摘要')
+  } catch {
+    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
+  }
+}
+
 async function confirmDeleteReport() {
   try {
     await ElMessageBox.confirm('确认删除本次测试数据？删除后报告、明细和导出文件将不可恢复。', '删除本次数据', {
@@ -973,6 +1215,115 @@ onMounted(loadReport)
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.recommendation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.recommendation-card,
+.audit-item {
+  min-height: 96px;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.recommendation-card.warning,
+.audit-item.warning {
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
+.recommendation-card.danger {
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.recommendation-card span,
+.recommendation-card em,
+.audit-item span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.recommendation-card strong {
+  display: block;
+  margin: 7px 0 5px;
+  color: #1e293b;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 20px;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.customer-summary {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.customer-summary p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.audit-item {
+  min-height: auto;
+}
+
+.audit-item strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.retention-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.retention-panel > div {
+  min-height: 78px;
+  padding: 13px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.retention-panel span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.retention-panel strong {
+  display: block;
+  margin-top: 7px;
+  color: #1e293b;
+  font-size: 15px;
+  line-height: 1.35;
 }
 
 .expectation-grid {
@@ -1064,7 +1415,9 @@ onMounted(loadReport)
   }
 
   .expectation-grid,
-  .diagnostic-grid {
+  .diagnostic-grid,
+  .recommendation-grid,
+  .retention-panel {
     grid-template-columns: 1fr;
   }
 }

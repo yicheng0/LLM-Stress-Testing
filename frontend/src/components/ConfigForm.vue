@@ -1,5 +1,24 @@
 <template>
   <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent>
+    <div class="section mode-section">
+      <div class="section-header">
+        <h2 class="section-title">使用模式</h2>
+        <el-segmented v-model="usageMode" :options="usageModeOptions" />
+      </div>
+      <div class="section-body">
+        <div class="mode-grid">
+          <div class="mode-card" :class="{ active: !isExpertMode }">
+            <strong>新手模式</strong>
+            <span>围绕目标 RPM/TPM 反推配置，只显示启动测试必需参数。</span>
+          </div>
+          <div class="mode-card" :class="{ active: isExpertMode }">
+            <strong>专家模式</strong>
+            <span>开放 Endpoint、高级重试、节流和矩阵容量测试参数。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-header">
         <h2 class="section-title">基础配置</h2>
@@ -57,13 +76,13 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="Endpoint" prop="endpoint">
+        <el-form-item v-if="isExpertMode" label="Endpoint" prop="endpoint">
           <el-input v-model="form.endpoint" placeholder="/chat/completions" />
         </el-form-item>
         <el-form-item :label="apiKeyLabel" prop="api_key" class="full-row">
           <el-input v-model="form.api_key" type="password" show-password autocomplete="off" />
         </el-form-item>
-        <div class="protocol-preview full-row" :class="{ warning: endpointMismatch }">
+        <div v-if="isExpertMode || endpointMismatch" class="protocol-preview full-row" :class="{ warning: endpointMismatch }">
           <div class="preview-head">
             <div>
               <strong>协议请求预览</strong>
@@ -113,7 +132,7 @@
         </div>
         <div class="preset-grid" role="list" aria-label="压测预设模板">
           <button
-            v-for="preset in testPresets"
+            v-for="preset in visibleTestPresets"
             :key="preset.key"
             type="button"
             class="preset-card"
@@ -209,7 +228,7 @@
             <div class="target-head">
               <div>
                 <h3>按预期反推测试参数</h3>
-                <p>先选择目标模式和 Token 规模，点击应用后会同步修改上方真实测试参数。</p>
+                <p>{{ isExpertMode ? '选择目标模式和 Token 规模，点击应用后会同步修改上方真实测试参数。' : '填写目标 RPM、Token 规模和预计耗时，系统会反推并发与预期 TPM。' }}</p>
               </div>
               <el-tag :type="form.matrix_mode ? 'warning' : 'success'" effect="plain">
                 {{ form.matrix_mode ? '矩阵模式不可用' : '单点测试可同步' }}
@@ -217,7 +236,7 @@
             </div>
             <div class="target-presets" role="list" aria-label="预期吞吐目标模板">
               <button
-                v-for="preset in throughputTargets"
+                v-for="preset in visibleThroughputTargets"
                 :key="preset.key"
                 type="button"
                 class="target-preset"
@@ -231,7 +250,7 @@
                 <em>{{ preset.input_tokens.toLocaleString() }} in / {{ preset.max_output_tokens }} out / {{ preset.assumed_latency_sec }}s</em>
               </button>
             </div>
-            <div class="target-mode-row">
+            <div v-if="isExpertMode" class="target-mode-row">
               <span>反推模式</span>
               <el-segmented
                 v-model="targetEstimate.mode"
@@ -362,7 +381,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div v-if="isExpertMode || form.matrix_mode" class="section">
       <div class="section-header">
         <h2 class="section-title">高级配置</h2>
       </div>
@@ -400,7 +419,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div v-if="isExpertMode" class="section">
       <div class="section-header">
         <h2 class="section-title">矩阵测试</h2>
         <el-switch v-model="form.matrix_mode" active-text="开启" inactive-text="关闭" />
@@ -572,6 +591,7 @@ const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
 const assumedLatencySec = ref(10)
+const usageMode = ref('beginner')
 const targetEstimate = reactive({
   mode: 'rpm',
   rpm: 300,
@@ -596,6 +616,10 @@ const latencyAssumptionOptions = [
 const targetModeOptions = [
   { label: '按 RPM 目标', value: 'rpm' },
   { label: '按 TPM 目标', value: 'tpm' }
+]
+const usageModeOptions = [
+  { label: '新手模式', value: 'beginner' },
+  { label: '专家模式', value: 'expert' }
 ]
 const throughputTargets = [
   {
@@ -818,6 +842,13 @@ const modelPlaceholder = computed(() => (
 ))
 const selectedProtocol = computed(() => (
   protocolOptions.find((item) => item.value === form.api_protocol) || protocolOptions[0]
+))
+const isExpertMode = computed(() => usageMode.value === 'expert')
+const visibleTestPresets = computed(() => (
+  isExpertMode.value ? testPresets : testPresets.filter((preset) => preset.key !== 'matrix')
+))
+const visibleThroughputTargets = computed(() => (
+  isExpertMode.value ? throughputTargets : throughputTargets.filter((preset) => preset.mode === 'rpm')
 ))
 const protocolText = computed(() => selectedProtocol.value.label)
 const resolvedEndpoint = computed(() => String(form.endpoint || '').replace('{model}', form.model || '{model}'))
@@ -1151,6 +1182,15 @@ watch(
 )
 
 watch(
+  usageMode,
+  (mode) => {
+    if (mode !== 'beginner') return
+    form.matrix_mode = false
+    targetEstimate.mode = 'rpm'
+  }
+)
+
+watch(
   () => form.duration_sec,
   (value) => {
     if (form.matrix_mode) return
@@ -1264,6 +1304,7 @@ async function submit() {
 function reset() {
   Object.assign(form, defaults)
   tokenPreset.value = '1000'
+  usageMode.value = 'beginner'
   Object.assign(targetEstimate, {
     mode: 'rpm',
     rpm: 300,
@@ -1281,6 +1322,43 @@ function reset() {
 <style scoped>
 .full-row {
   grid-column: 1 / -1;
+}
+
+.mode-section {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mode-card {
+  display: grid;
+  gap: 6px;
+  min-height: 76px;
+  padding: 13px;
+  border: 1px solid #d8e0ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mode-card.active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+
+.mode-card strong {
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.mode-card span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .section-body-compact {
@@ -2082,6 +2160,10 @@ function reset() {
 }
 
 @media (max-width: 720px) {
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
+
   .preset-grid {
     grid-template-columns: 1fr;
   }
