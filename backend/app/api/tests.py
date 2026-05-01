@@ -94,6 +94,16 @@ def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
     return summary.get("results") or {}
 
 
+def _expected_targets(expected_metrics: dict[str, Any] | None) -> dict[str, float | None]:
+    expected_metrics = expected_metrics or {}
+    return {
+        "rpm": _num(expected_metrics.get("expected_rpm"), None),
+        "tpm": _num(expected_metrics.get("expected_tpm"), None),
+        "tps": _num(expected_metrics.get("expected_tps"), None),
+        "latency_sec": _num(expected_metrics.get("expected_latency_sec"), None),
+    }
+
+
 def _task_out(
     task: TestTask,
     result: TestResult | None,
@@ -198,11 +208,15 @@ async def realtime_dashboard(
     active_tasks = 0
     metric_sources: list[dict[str, Any]] = []
     fallback_metric_sources: list[dict[str, Any]] = []
+    target_sources: list[dict[str, float | None]] = []
+    fallback_target_sources: list[dict[str, float | None]] = []
     recent_tasks = []
 
     for task, result in rows:
         status_counts[task.status] = status_counts.get(task.status, 0) + 1
         config = _config(task)
+        expected_metrics = config.get("expected_metrics") or {}
+        targets = _expected_targets(expected_metrics)
         protocol = task.api_protocol or config.get("api_protocol", "openai")
         protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
         model_counts[task.model] = model_counts.get(task.model, 0) + 1
@@ -229,7 +243,9 @@ async def realtime_dashboard(
         }
         if is_active:
             metric_sources.append(metric_item)
+            target_sources.append(targets)
         fallback_metric_sources.append(metric_item)
+        fallback_target_sources.append(targets)
 
         recent_tasks.append({
             "id": task.id,
@@ -238,15 +254,30 @@ async def realtime_dashboard(
             "api_protocol": protocol,
             "model": task.model,
             "concurrency": task.concurrency,
+            "duration_sec": task.duration_sec,
             "created_at": task.created_at,
+            "started_at": task.started_at,
+            "completed_at": task.completed_at,
             "rpm": item_rpm,
             "tpm": item_tpm,
             "success_rate": item_success_rate,
+            "latency_p95": item_p95,
+            "expected_metrics": expected_metrics,
+            "error_message": result.error_message if result else None,
         })
 
     sources = metric_sources or fallback_metric_sources[:12]
+    target_sources = target_sources or fallback_target_sources[:12]
     rpm = sum(_num(item.get("rpm")) for item in sources)
     tpm = sum(_num(item.get("tpm")) for item in sources)
+    expected_rpm = sum(_num(item.get("rpm")) for item in target_sources if item.get("rpm") is not None)
+    expected_tpm = sum(_num(item.get("tpm")) for item in target_sources if item.get("tpm") is not None)
+    expected_tps = sum(_num(item.get("tps")) for item in target_sources if item.get("tps") is not None)
+    expected_latency_values = [
+        _num(item.get("latency_sec"))
+        for item in target_sources
+        if item.get("latency_sec") is not None
+    ]
     success_rates = [
         _num(item.get("success_rate"))
         for item in sources
@@ -265,6 +296,10 @@ async def realtime_dashboard(
         "metrics": {
             "rpm": round(rpm, 4),
             "tpm": round(tpm, 4),
+            "expected_rpm": round(expected_rpm, 4) if expected_rpm else None,
+            "expected_tpm": round(expected_tpm, 4) if expected_tpm else None,
+            "expected_tps": round(expected_tps, 4) if expected_tps else None,
+            "expected_latency_sec": round(sum(expected_latency_values) / len(expected_latency_values), 4) if expected_latency_values else None,
             "success_rate": round(sum(success_rates) / len(success_rates), 4) if success_rates else None,
             "latency_p95": round(max(p95_values), 4) if p95_values else None,
         },
@@ -328,7 +363,17 @@ async def get_report(task_id: str, repository: Repository = Depends(get_reposito
         "matrix_csv": result.matrix_csv_path if result else None,
     }
     events = [_event_out(event) for event in repository.list_events(task_id)]
-    return ReportOut(test_id=task_id, config=config, summary=summary, charts=charts, files=files, events=events)
+    return ReportOut(
+        test_id=task_id,
+        config=config,
+        summary=summary,
+        charts=charts,
+        files=files,
+        events=events,
+        completed_at=task.completed_at,
+        expires_at=_expires_at(task),
+        retention_hours=settings.result_retention_hours,
+    )
 
 
 @router.get("/{task_id}/details", response_model=DetailsOut)
