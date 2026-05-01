@@ -22,6 +22,14 @@
     <el-table-column label="创建时间" min-width="170">
       <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
     </el-table-column>
+    <el-table-column label="结果过期时间" min-width="170">
+      <template #default="{ row }">
+        <div class="expiry-cell">
+          <span>{{ formatExpiry(row) }}</span>
+          <el-tag v-if="isExpired(row)" size="small" type="danger" effect="plain">已过期</el-tag>
+        </div>
+      </template>
+    </el-table-column>
     <el-table-column label="操作" width="180" fixed="right">
       <template #default="{ row }">
         <el-button size="small" type="primary" :icon="DataAnalysis" @click="$emit('report', row)">报告</el-button>
@@ -98,6 +106,27 @@ function number(value) {
   return Number(value).toLocaleString()
 }
 
+function formatExpiry(row) {
+  if (row.expires_at) return formatTime(row.expires_at)
+  if (row.result_expires_at) return formatTime(row.result_expires_at)
+  if (row.completed_at) return `${formatTime(addHours(row.completed_at, 24))}（估算）`
+  if (row.created_at) return `${formatTime(addHours(row.created_at, 24))}（估算）`
+  return '-'
+}
+
+function isExpired(row) {
+  const value = row.expires_at || row.result_expires_at
+  if (!value) return false
+  return new Date(value).getTime() < Date.now()
+}
+
+function addHours(value, hours) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  date.setHours(date.getHours() + hours)
+  return date
+}
+
 function formatTime(value) {
   if (!value) return '-'
   return new Intl.DateTimeFormat('zh-CN', {
@@ -109,3 +138,11 @@ function formatTime(value) {
   }).format(new Date(value))
 }
 </script>
+
+<style scoped>
+.expiry-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+</style>

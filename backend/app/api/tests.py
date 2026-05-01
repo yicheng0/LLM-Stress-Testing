@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,7 +14,7 @@ from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
-from backend.app.models.schemas import DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
+from backend.app.models.schemas import CleanupOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 
@@ -116,6 +116,7 @@ def _task_out(
         created_at=task.created_at,
         started_at=task.started_at,
         completed_at=task.completed_at,
+        expires_at=_expires_at(task),
         progress=progress,
         summary=_safe_load_summary(result),
         error_message=result.error_message if result else None,
@@ -124,6 +125,14 @@ def _task_out(
 
 def _event_out(event: TestEvent) -> EventOut:
     return EventOut(id=event.id, level=event.level, message=event.message, created_at=event.created_at)
+
+
+def _expires_at(task: TestTask) -> datetime | None:
+    if not task.completed_at:
+        return None
+    if settings.result_retention_hours <= 0:
+        return task.completed_at
+    return task.completed_at + timedelta(hours=settings.result_retention_hours)
 
 
 @router.post("", response_model=StartTestOut)
@@ -263,6 +272,12 @@ async def realtime_dashboard(
         "error_counts": dict(sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
         "recent_tasks": recent_tasks[:8],
     }
+
+
+@router.post("/cleanup/expired", response_model=CleanupOut)
+async def cleanup_expired(repository: Repository = Depends(get_repository)) -> CleanupOut:
+    deleted = repository.cleanup_expired_results()
+    return CleanupOut(deleted=deleted, retention_hours=settings.result_retention_hours)
 
 
 @router.get("/{task_id}", response_model=TestTaskOut)

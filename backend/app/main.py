@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.config import settings
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.core.progress import ProgressHub
@@ -21,6 +22,8 @@ task_manager = TaskManager(repository, progress_hub)
 async def lifespan(app: FastAPI):
     init_db()
     repository.mark_unfinished_interrupted()
+    if settings.cleanup_on_startup:
+        repository.cleanup_expired_results()
     yield
 
 

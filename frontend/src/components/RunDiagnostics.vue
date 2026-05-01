@@ -77,9 +77,23 @@ const topError = computed(() => {
 })
 const overall = computed(() => {
   if (failureRate.value >= 0.1 || topError.value !== '无') return { label: '需要关注', type: 'warning' }
-  if (props.socketStatus === 'fallback') return { label: '连接降级', type: 'warning' }
+  if (props.socketStatus === 'polling') return { label: '轮询更新', type: 'warning' }
+  if (props.socketStatus === 'connecting') return { label: '连接中', type: 'info' }
+  if (props.socketStatus === 'ended') return { label: '已结束', type: 'info' }
   if (completed.value > 0) return { label: '运行正常', type: 'success' }
   return { label: '等待数据', type: 'info' }
+})
+const channelState = computed(() => {
+  if (props.socketStatus === 'connected') {
+    return { value: '实时连接', hint: 'WebSocket 正常推送', type: 'ok' }
+  }
+  if (props.socketStatus === 'polling') {
+    return { value: '轮询更新', hint: '每 3 秒刷新任务状态', type: 'warning' }
+  }
+  if (props.socketStatus === 'ended') {
+    return { value: '已结束', hint: '已停止实时更新', type: 'ok' }
+  }
+  return { value: '连接中', hint: '正在建立实时通道', type: 'warning' }
 })
 const diagnosticItems = computed(() => [
   {
@@ -102,9 +116,9 @@ const diagnosticItems = computed(() => [
   },
   {
     label: '实时通道',
-    value: props.socketStatus === 'connected' ? 'WebSocket' : '轮询',
-    hint: props.socketStatus === 'connected' ? '实时连接正常' : '已使用轮询兜底',
-    type: props.socketStatus === 'connected' ? 'ok' : 'warning'
+    value: channelState.value.value,
+    hint: channelState.value.hint,
+    type: channelState.value.type
   }
 ])
 const adviceItems = computed(() => {

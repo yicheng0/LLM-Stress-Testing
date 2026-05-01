@@ -1725,7 +1725,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-protocol", choices=list(PROTOCOL_SPECS.keys()), default="openai", help="接口协议类型")
     parser.add_argument("--anthropic-version", default="2023-06-01", help="Anthropic API 版本请求头")
     parser.add_argument("--base-url", default="https://api.wenwen-ai.com", help="例如 https://api.wenwen-ai.com")
-    parser.add_argument("--api-key", default="sk-G5JY02Ovu0HN6aEXc8wXfObOL7qVT30ulzNJewmVrwdDtovD", help="API Key")
+    parser.add_argument("--api-key", default=os.getenv("API_KEY") or os.getenv("LLM_API_KEY"), help="API Key，默认读取 API_KEY 或 LLM_API_KEY 环境变量")
     parser.add_argument("--model", default="glm-5.1", help="模型名")
     parser.add_argument("--endpoint", default="/chat/completions", help="/chat/completions 或 /responses")
     parser.add_argument("--concurrency", type=int, default=500)
@@ -1757,6 +1757,9 @@ def ensure_output_dir(path: str) -> Path:
 
 async def async_main() -> int:
     args = parse_args()
+    if not args.api_key:
+        print("错误：请通过 --api-key、API_KEY 或 LLM_API_KEY 提供 API Key", file=sys.stderr)
+        return 2
     out_dir = ensure_output_dir(args.output_dir)
 
     tester = LoadTester(args)

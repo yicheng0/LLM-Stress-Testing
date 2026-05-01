@@ -12,6 +12,15 @@
           <em>{{ item.sub }}</em>
         </div>
       </div>
+      <div class="limit-summary" :class="{ blocked: exceedsBackendLimits }">
+        <div>
+          <span>后端限制校验</span>
+          <strong>{{ backendLimitText }}</strong>
+        </div>
+        <el-tag :type="exceedsBackendLimits ? 'danger' : 'success'" effect="plain">
+          {{ exceedsBackendLimits ? '超过限制' : '可提交' }}
+        </el-tag>
+      </div>
       <div class="risk-list">
         <el-alert
           v-for="item in riskItems"
@@ -28,7 +37,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+
+const emit = defineEmits(['summary-change'])
 
 const props = defineProps({
   config: {
@@ -36,6 +47,11 @@ const props = defineProps({
     required: true
   }
 })
+
+const BACKEND_LIMITS = {
+  maxConcurrencyPerTest: 500,
+  maxMatrixPoints: 25
+}
 
 const matrixInputs = computed(() => parseNumberList(props.config.input_tokens_list))
 const matrixConcurrency = computed(() => parseNumberList(props.config.concurrency_list))
@@ -55,6 +71,29 @@ const effectiveDuration = computed(() => (
 ))
 const estimatedMinutes = computed(() => pointCount.value * effectiveDuration.value / 60)
 const estimatedPeakTokens = computed(() => tokensPerRequest.value * maxConcurrency.value)
+const estimatedRequestCount = computed(() => (
+  isMatrix.value
+    ? matrixConcurrency.value.reduce((sum, concurrency) => (
+      sum + concurrency * matrixInputs.value.length
+    ), 0)
+    : maxConcurrency.value
+))
+const exceedsConcurrencyLimit = computed(() => maxConcurrency.value > BACKEND_LIMITS.maxConcurrencyPerTest)
+const exceedsMatrixPointLimit = computed(() => isMatrix.value && pointCount.value > BACKEND_LIMITS.maxMatrixPoints)
+const exceedsBackendLimits = computed(() => exceedsConcurrencyLimit.value || exceedsMatrixPointLimit.value)
+const backendLimitText = computed(() => {
+  if (!exceedsBackendLimits.value) {
+    return `并发 <= ${BACKEND_LIMITS.maxConcurrencyPerTest}，矩阵点 <= ${BACKEND_LIMITS.maxMatrixPoints}`
+  }
+  const reasons = []
+  if (exceedsConcurrencyLimit.value) {
+    reasons.push(`最大并发 ${number(maxConcurrency.value)} > ${BACKEND_LIMITS.maxConcurrencyPerTest}`)
+  }
+  if (exceedsMatrixPointLimit.value) {
+    reasons.push(`矩阵点 ${pointCount.value} > ${BACKEND_LIMITS.maxMatrixPoints}`)
+  }
+  return reasons.join('；')
+})
 const riskScore = computed(() => riskItems.value.reduce((sum, item) => sum + item.score, 0))
 const riskTagType = computed(() => {
   if (riskScore.value >= 8) return 'danger'
@@ -68,14 +107,32 @@ const riskLevelText = computed(() => {
 })
 
 const summaryItems = computed(() => [
-  { label: '测试点', value: `${pointCount.value} 组`, sub: isMatrix.value ? '矩阵组合' : '单点测试' },
-  { label: '峰值并发', value: number(maxConcurrency.value), sub: '最高并发压力' },
+  { label: '预计请求规模', value: `${number(estimatedRequestCount.value)} 次`, sub: '不含重试与预热' },
+  { label: '最大并发', value: number(maxConcurrency.value), sub: `后端上限 ${BACKEND_LIMITS.maxConcurrencyPerTest}` },
+  { label: '输入 Token 规模', value: compact(maxInputTokens.value), sub: isMatrix.value ? '矩阵最大输入' : '单请求输入' },
+  { label: '矩阵测试点', value: `${pointCount.value} 组`, sub: isMatrix.value ? `后端上限 ${BACKEND_LIMITS.maxMatrixPoints}` : '单点测试' },
   { label: '峰值 Token 压力', value: compact(estimatedPeakTokens.value), sub: '单轮并发估算' },
   { label: '预计时长', value: `${number(estimatedMinutes.value)} 分钟`, sub: '不含排队和重试' }
 ])
 
 const riskItems = computed(() => {
   const items = []
+  if (exceedsConcurrencyLimit.value) {
+    items.push({
+      title: '最大并发超过后端限制',
+      description: `后端默认单次测试并发上限为 ${BACKEND_LIMITS.maxConcurrencyPerTest}，当前提交会被拒绝。`,
+      type: 'error',
+      score: 8
+    })
+  }
+  if (exceedsMatrixPointLimit.value) {
+    items.push({
+      title: '矩阵测试点超过后端限制',
+      description: `后端默认矩阵测试点上限为 ${BACKEND_LIMITS.maxMatrixPoints}，请减少输入 Token 或并发列表项。`,
+      type: 'error',
+      score: 8
+    })
+  }
   if (maxConcurrency.value >= 300) {
     items.push({
       title: '并发压力较高',
@@ -127,6 +184,21 @@ const riskItems = computed(() => {
   return items
 })
 
+const riskSummary = computed(() => ({
+  level: riskLevelText.value,
+  levelType: riskTagType.value,
+  exceedsBackendLimits: exceedsBackendLimits.value,
+  backendLimitText: backendLimitText.value,
+  estimatedRequestCount: estimatedRequestCount.value,
+  maxConcurrency: maxConcurrency.value,
+  maxInputTokens: maxInputTokens.value,
+  matrixPointCount: pointCount.value,
+  estimatedMinutes: estimatedMinutes.value,
+  items: riskItems.value.map(({ title, description, type }) => ({ title, description, type }))
+}))
+
+watch(riskSummary, (value) => emit('summary-change', value), { immediate: true, deep: true })
+
 function parseNumberList(value) {
   return [...new Set(String(value || '')
     .split(',')
@@ -148,7 +220,7 @@ function compact(value) {
 <style scoped>
 .risk-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -182,15 +254,57 @@ function compact(value) {
   margin-top: 14px;
 }
 
+.limit-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.limit-summary.blocked {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.limit-summary div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.limit-summary span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.limit-summary strong {
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 960px) {
   .risk-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
   .risk-grid {
     grid-template-columns: 1fr;
+  }
+
+  .limit-summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

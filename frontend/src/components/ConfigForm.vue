@@ -103,6 +103,33 @@
       <div class="section-header">
         <h2 class="section-title">负载配置</h2>
       </div>
+      <div class="section-body preset-section">
+        <div class="preset-head">
+          <div>
+            <h3>预设模板</h3>
+            <p>选择后会更新负载、流式和矩阵参数，接口协议与密钥保持不变。</p>
+          </div>
+          <el-tag effect="plain">{{ selectedPresetLabel }}</el-tag>
+        </div>
+        <div class="preset-grid" role="list" aria-label="压测预设模板">
+          <button
+            v-for="preset in testPresets"
+            :key="preset.key"
+            type="button"
+            class="preset-card"
+            :class="{ active: activePresetKey === preset.key }"
+            role="listitem"
+            @click="applyPreset(preset)"
+          >
+            <span class="preset-title">{{ preset.label }}</span>
+            <span class="preset-desc">{{ preset.description }}</span>
+            <span class="preset-meta">
+              <span>{{ preset.meta }}</span>
+              <strong>{{ preset.matrix_mode ? '矩阵' : '单点' }}</strong>
+            </span>
+          </button>
+        </div>
+      </div>
       <div class="section-body grid-2">
         <el-form-item label="并发数" prop="concurrency">
           <el-input-number v-model="form.concurrency" :min="1" :max="1000" controls-position="right" />
@@ -340,6 +367,95 @@ const tokenOptions = [
   { label: '10k', value: '10000' },
   { label: '100k', value: '100000' }
 ]
+const testPresets = [
+  {
+    key: 'quick',
+    label: '快速验证',
+    description: '用于连通性、鉴权和报告链路检查。',
+    meta: '5 并发 / 30s / 1k',
+    values: {
+      name: '快速验证',
+      concurrency: 5,
+      duration_sec: 30,
+      input_tokens: 1000,
+      max_output_tokens: 128,
+      warmup_requests: 0,
+      enable_stream: true,
+      matrix_mode: false,
+      matrix_duration_sec: 60
+    }
+  },
+  {
+    key: 'small',
+    label: '小流量',
+    description: '低风险观察稳定性，适合作为基线。',
+    meta: '20 并发 / 120s / 2k',
+    values: {
+      name: '小流量稳定性测试',
+      concurrency: 20,
+      duration_sec: 120,
+      input_tokens: 2000,
+      max_output_tokens: 256,
+      warmup_requests: 2,
+      enable_stream: true,
+      matrix_mode: false,
+      matrix_duration_sec: 60
+    }
+  },
+  {
+    key: 'throughput',
+    label: '吞吐测试',
+    description: '提高并发和持续时间，观察 RPM/TPM 上限。',
+    meta: '200 并发 / 300s / 10k',
+    values: {
+      name: '吞吐上限测试',
+      concurrency: 200,
+      duration_sec: 300,
+      input_tokens: 10000,
+      max_output_tokens: 256,
+      warmup_requests: 10,
+      enable_stream: true,
+      matrix_mode: false,
+      matrix_duration_sec: 60
+    }
+  },
+  {
+    key: 'long-context',
+    label: '长上下文测试',
+    description: '验证大输入场景下的延迟、TTFT 和错误率。',
+    meta: '20 并发 / 180s / 100k',
+    values: {
+      name: '长上下文测试',
+      concurrency: 20,
+      duration_sec: 180,
+      input_tokens: 100000,
+      max_output_tokens: 512,
+      warmup_requests: 2,
+      enable_stream: true,
+      matrix_mode: false,
+      matrix_duration_sec: 60
+    }
+  },
+  {
+    key: 'matrix',
+    label: '矩阵测试',
+    description: '组合输入规模和并发，生成容量对比结果。',
+    meta: '3 x 3 / 每点 60s',
+    values: {
+      name: '矩阵容量测试',
+      concurrency: 50,
+      duration_sec: 60,
+      input_tokens: 1000,
+      max_output_tokens: 128,
+      warmup_requests: 0,
+      enable_stream: true,
+      matrix_mode: true,
+      input_tokens_list: '1000,10000,100000',
+      concurrency_list: '10,50,100',
+      matrix_duration_sec: 60
+    }
+  }
+]
 const domainOptions = [
   {
     label: '国内节点',
@@ -479,6 +595,13 @@ const estimatedTpmText = computed(() => (
 const estimatedTpsText = computed(() => (
   form.matrix_mode ? rangeText(estimatedMatrixTpsRange.value) : number(estimatedSingleTps.value)
 ))
+const activePresetKey = computed(() => {
+  const match = testPresets.find((preset) => Object.entries(preset.values).every(([key, value]) => form[key] === value))
+  return match?.key || ''
+})
+const selectedPresetLabel = computed(() => (
+  testPresets.find((preset) => preset.key === activePresetKey.value)?.label || '自定义参数'
+))
 
 function isKnownBaseUrl(value) {
   return domainOptions.some((item) => item.value === value)
@@ -592,6 +715,23 @@ function applyTokenPreset(value) {
   form.input_tokens = Number(value)
 }
 
+function applyPreset(preset) {
+  Object.assign(form, preset.values)
+  tokenPreset.value = tokenOptions.some((item) => Number(item.value) === Number(form.input_tokens))
+    ? String(form.input_tokens)
+    : ''
+  formRef.value?.clearValidate([
+    'concurrency',
+    'duration_sec',
+    'input_tokens',
+    'max_output_tokens',
+    'warmup_requests',
+    'input_tokens_list',
+    'concurrency_list',
+    'matrix_duration_sec'
+  ])
+}
+
 async function submit() {
   await formRef.value.validate()
   emit('submit', { ...form })
@@ -618,6 +758,104 @@ function reset() {
   flex-wrap: wrap;
   gap: 10px;
   width: 100%;
+}
+
+.preset-section {
+  padding-bottom: 0;
+}
+
+.preset-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.preset-head h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.preset-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.preset-card {
+  display: flex;
+  min-height: 124px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid #d8e0ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1e293b;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.preset-card:hover {
+  border-color: #93b4e8;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.preset-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+
+.preset-card.active {
+  border-color: #2563eb;
+  background: #f8fbff;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+
+.preset-title {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.preset-desc {
+  flex: 1;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.preset-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.preset-meta strong {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #1d4ed8;
+  font-size: 11px;
 }
 
 .full-select {
@@ -1044,12 +1282,20 @@ function reset() {
     grid-template-columns: 1fr;
   }
 
+  .preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .preview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
+  .preset-grid {
+    grid-template-columns: 1fr;
+  }
+
   .matrix-preview {
     grid-template-columns: 1fr;
   }

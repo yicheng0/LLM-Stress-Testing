@@ -31,6 +31,9 @@
         <el-button :icon="DataAnalysis" :disabled="!canCompare" @click="goCompare">
           对比 {{ selectedRows.length || '' }}
         </el-button>
+        <el-button :icon="Delete" type="warning" plain @click="cleanupExpired">
+          清理过期
+        </el-button>
         <el-dropdown trigger="click" :disabled="!canExport" @command="exportSelectedReport">
           <el-button type="primary" :icon="Download">
             导出报告
@@ -77,9 +80,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, DataAnalysis, Download, RefreshLeft, Search } from '@element-plus/icons-vue'
+import { ArrowDown, DataAnalysis, Delete, Download, RefreshLeft, Search } from '@element-plus/icons-vue'
 import HistoryTable from '../components/HistoryTable.vue'
-import { deleteTest, downloadUrl } from '../api/client'
+import { cleanupExpiredTests, deleteTest, downloadUrl } from '../api/client'
 import { useTestsStore } from '../stores/tests'
 
 const router = useRouter()
@@ -123,6 +126,25 @@ async function confirmDelete(row) {
   try {
     await deleteTest(row.id)
     ElMessage.success('已删除')
+    store.fetchHistory()
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+async function cleanupExpired() {
+  try {
+    await ElMessageBox.confirm('确认清理所有超过保留时间的测试记录和结果文件？', '清理过期数据', {
+      type: 'warning',
+      confirmButtonText: '清理',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    const result = await cleanupExpiredTests()
+    ElMessage.success(`已清理 ${result.deleted || 0} 条过期数据`)
     store.fetchHistory()
   } catch (error) {
     ElMessage.error(error.message)

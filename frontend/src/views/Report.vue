@@ -6,6 +6,7 @@
         <div class="toolbar">
           <el-button :icon="Monitor" @click="router.push(`/tests/${id}/run`)">运行页</el-button>
           <el-button :icon="CopyDocument" @click="copyRerun">复制配置</el-button>
+          <el-button :icon="Delete" type="danger" plain @click="confirmDeleteReport">删除本次数据</el-button>
           <el-dropdown trigger="click" :disabled="!downloadItems.length" @command="openDownload">
             <el-button type="primary" :icon="Download">
               导出报告
@@ -46,6 +47,15 @@
         <el-tag :type="reportConclusion.type" effect="plain">{{ reportConclusion.label }}</el-tag>
       </div>
       <div class="section-body">
+        <el-alert
+          v-if="!config.enable_stream"
+          class="report-alert"
+          title="非流式模式下 TTFT / Decode 无法准确测量"
+          description="当前响应只能在完整返回后计时，首 token 到达时间和逐 token 解码耗时缺少真实观测点；请优先依据总延迟、吞吐和错误分布判断容量，若需要 TTFT 诊断请开启流式模式复测。"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
         <div class="conclusion-grid">
           <div v-for="item in conclusionItems" :key="item.label" class="conclusion-card" :class="item.type">
             <span>{{ item.label }}</span>
@@ -124,6 +134,22 @@
 
     <template v-else>
       <MetricCards :items="metricItems" />
+
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">容量与性能诊断</h2>
+          <el-tag :type="diagnosticStatus.type" effect="plain">{{ diagnosticStatus.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="diagnostic-grid">
+            <div v-for="item in diagnosticCards" :key="item.label" class="diagnostic-card" :class="item.type">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.description }}</em>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="grid-2 report-grid">
         <div class="section">
@@ -216,12 +242,12 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { ArrowDown, CopyDocument, Download, Monitor, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown, CopyDocument, Delete, Download, Monitor, Refresh } from '@element-plus/icons-vue'
 import ChartPanel from '../components/ChartPanel.vue'
 import MetricCards from '../components/MetricCards.vue'
 import MetricsTable from '../components/MetricsTable.vue'
-import { downloadUrl, getDetails, getReport } from '../api/client'
+import { deleteTest, downloadUrl, getDetails, getReport } from '../api/client'
 
 const props = defineProps({
   id: {
@@ -274,6 +300,47 @@ const metricItems = computed(() => [
   { label: 'RPM', value: number(results.value.rpm), sub: `QPS ${number(results.value.qps)}`, color: '#f97316' },
   { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' }
 ])
+
+const diagnosticStatus = computed(() => {
+  if (Number(results.value.failed_requests || 0) > 0 || Number(results.value.success_rate || 1) < 0.99) {
+    return { label: '先排查错误', type: 'warning' }
+  }
+  if (bottleneckText.value !== '-' && bottleneckText.value !== '混合瓶颈') {
+    return { label: `${bottleneckText.value} 受限`, type: 'warning' }
+  }
+  return { label: '指标均衡', type: 'success' }
+})
+
+const diagnosticCards = computed(() => {
+  const errorCounts = charts.value.error_counts || {}
+  const topError = Object.entries(errorCounts).sort((a, b) => Number(b[1]) - Number(a[1]))[0]
+  return [
+    {
+      label: '吞吐上限',
+      value: `TPM ${number(results.value.total_tpm)}`,
+      description: `RPM ${number(results.value.rpm)} / TPS ${number(results.value.total_tps)}`,
+      type: 'ok'
+    },
+    {
+      label: '延迟瓶颈',
+      value: bottleneckText.value,
+      description: `Avg ${seconds(results.value.latency_sec_avg)} / P95 ${seconds(results.value.latency_sec_p95)}`,
+      type: Number(results.value.latency_sec_p95 || 0) >= 10 ? 'warning' : 'ok'
+    },
+    {
+      label: '错误分布',
+      value: topError ? `${topError[0]} x ${number(topError[1])}` : '无错误',
+      description: `失败 ${number(results.value.failed_requests)} / 成功率 ${percent(results.value.success_rate)}`,
+      type: topError ? 'warning' : 'ok'
+    },
+    {
+      label: 'TTFT / Decode',
+      value: config.value.enable_stream ? `${seconds(results.value.ttft_sec_avg)} / ${seconds(results.value.decode_sec_avg)}` : '不可准确测量',
+      description: config.value.enable_stream ? ttftDecodeDescription.value : '非流式响应缺少首 token 到达事件',
+      type: config.value.enable_stream ? 'ok' : 'warning'
+    }
+  ]
+})
 
 const matrixMetricItems = computed(() => {
   const bestTpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.total_tpm || 0)))
@@ -328,10 +395,18 @@ const bottleneckText = computed(() => {
   const latency = Number(results.value.latency_sec_avg || 0)
   const ttft = Number(results.value.ttft_sec_avg || 0)
   const decode = Number(results.value.decode_sec_avg || 0)
+  if (!config.value.enable_stream) return 'TTFT 不可测'
   if (!latency) return '-'
   if (ttft / latency >= 0.55) return 'Prefill / 排队'
   if (decode / latency >= 0.55) return 'Decode'
   return '混合瓶颈'
+})
+const ttftDecodeDescription = computed(() => {
+  const latency = Number(results.value.latency_sec_avg || 0)
+  const ttft = Number(results.value.ttft_sec_avg || 0)
+  const decode = Number(results.value.decode_sec_avg || 0)
+  if (!latency) return '缺少有效延迟样本'
+  return `TTFT ${percent(ttft / latency)} / Decode ${percent(decode / latency)}`
 })
 const conclusionAdvice = computed(() => {
   const items = []
@@ -362,6 +437,13 @@ const conclusionAdvice = computed(() => {
     items.push({
       title: 'P95 延迟偏高',
       description: '建议结合 TTFT / Decode 图判断是输入预填充、输出解码还是队列等待导致。',
+      type: 'warning'
+    })
+  }
+  if (!config.value.enable_stream) {
+    items.push({
+      title: 'TTFT / Decode 诊断受限',
+      description: '非流式模式无法准确测量首 token 和解码阶段耗时，容量判断请以总延迟、吞吐和错误为主。',
       type: 'warning'
     })
   }
@@ -659,6 +741,25 @@ function copyRerun() {
   router.push('/tests/new')
 }
 
+async function confirmDeleteReport() {
+  try {
+    await ElMessageBox.confirm('确认删除本次测试数据？删除后报告、明细和导出文件将不可恢复。', '删除本次数据', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteTest(props.id)
+    ElMessage.success('已删除本次数据')
+    router.push('/history')
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
 function number(value) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -720,9 +821,56 @@ onMounted(loadReport)
   margin-top: 14px;
 }
 
+.report-alert {
+  margin-bottom: 14px;
+}
+
+.diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.diagnostic-card {
+  min-height: 112px;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.diagnostic-card.warning {
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
+.diagnostic-card span,
+.diagnostic-card em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.diagnostic-card strong {
+  display: block;
+  margin: 8px 0 6px;
+  color: #1e293b;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 18px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
 @media (max-width: 720px) {
   .metric-select {
     width: 100%;
+  }
+
+  .diagnostic-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

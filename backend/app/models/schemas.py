@@ -53,6 +53,7 @@ class TestTaskOut(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    expires_at: datetime | None = None
     progress: dict[str, Any] | None = None
     summary: dict[str, Any] | None = None
     error_message: str | None = None
@@ -92,3 +93,8 @@ class DetailsOut(BaseModel):
     page: int
     page_size: int
     items: list[dict[str, Any]]
+
+
+class CleanupOut(BaseModel):
+    deleted: int
+    retention_hours: int

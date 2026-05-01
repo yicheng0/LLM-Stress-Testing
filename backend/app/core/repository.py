@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -13,10 +14,40 @@ from backend.app.models.database import SessionLocal, TestEvent, TestResult, Tes
 from backend.app.models.schemas import TestCreate
 
 
+SENSITIVE_TEXT_PATTERNS = [
+    re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b"),
+    re.compile(r"(?i)(api[_-]?key['\"\s:=]+)[A-Za-z0-9._\-]{12,}"),
+    re.compile(r"(?i)((?:x-api-key|x-goog-api-key)['\"\s:=]+)[A-Za-z0-9._\-]{12,}"),
+]
+
+
 def _model_dump(model: Any) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _redact_text(value: str) -> str:
+    redacted = value
+    for pattern in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]" if match.lastindex else "[REDACTED]", redacted)
+    return redacted
+
+
+def _redact_sensitive(data: Any) -> Any:
+    if isinstance(data, dict):
+        redacted = {}
+        for key, value in data.items():
+            if key.lower() in {"api_key", "api-key", "authorization", "x-api-key", "x-goog-api-key"}:
+                continue
+            redacted[key] = _redact_sensitive(value)
+        return redacted
+    if isinstance(data, list):
+        return [_redact_sensitive(item) for item in data]
+    if isinstance(data, str):
+        return _redact_text(data)
+    return data
 
 
 class Repository:
@@ -24,8 +55,7 @@ class Repository:
         return SessionLocal()
 
     def create_task(self, task_id: str, payload: TestCreate) -> TestTask:
-        data = _model_dump(payload)
-        data.pop("api_key", None)
+        data = _redact_sensitive(_model_dump(payload))
         now = datetime.utcnow()
         task = TestTask(
             id=task_id,
@@ -145,9 +175,9 @@ class Repository:
                 result = TestResult(task_id=task_id)
                 db.add(result)
             if summary is not None:
-                result.summary_json = json.dumps(summary, ensure_ascii=False)
+                result.summary_json = json.dumps(_redact_sensitive(summary), ensure_ascii=False)
             if error_message is not None:
-                result.error_message = error_message
+                result.error_message = _redact_text(error_message)
             result.summary_path = summary_path or result.summary_path
             result.details_jsonl_path = details_jsonl_path or result.details_jsonl_path
             result.report_md_path = report_md_path or result.report_md_path
@@ -157,7 +187,7 @@ class Repository:
 
     def add_event(self, task_id: str, level: str, message: str) -> None:
         with self.session() as db:
-            db.add(TestEvent(task_id=task_id, level=level, message=message[:4000]))
+            db.add(TestEvent(task_id=task_id, level=level, message=_redact_text(message)[:4000]))
             db.commit()
 
     def list_events(self, task_id: str, limit: int = 50) -> list[TestEvent]:
@@ -198,3 +228,25 @@ class Repository:
         if task_results_dir.exists() and results_root in task_results_dir.parents:
             shutil.rmtree(task_results_dir)
         return True
+
+    def cleanup_expired_results(self, retention_hours: int | None = None) -> int:
+        retention = settings.result_retention_hours if retention_hours is None else retention_hours
+        if retention <= 0:
+            cutoff = datetime.utcnow()
+        else:
+            cutoff = datetime.utcnow() - timedelta(hours=retention)
+
+        terminal_statuses = ["completed", "failed", "cancelled", "interrupted"]
+        with self.session() as db:
+            stmt = select(TestTask.id).where(
+                TestTask.status.in_(terminal_statuses),
+                TestTask.completed_at.is_not(None),
+                TestTask.completed_at < cutoff,
+            )
+            task_ids = [row[0] for row in db.execute(stmt).all()]
+
+        deleted = 0
+        for task_id in task_ids:
+            if self.delete_task(task_id):
+                deleted += 1
+        return deleted
