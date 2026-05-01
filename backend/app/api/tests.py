@@ -99,10 +99,11 @@ def _task_out(
     result: TestResult | None,
     progress: dict[str, Any] | None = None,
 ) -> TestTaskOut:
+    config = _config(task)
     return TestTaskOut(
         id=task.id,
         name=task.name,
-        api_protocol=task.api_protocol or _config(task).get("api_protocol", "openai"),
+        api_protocol=task.api_protocol or config.get("api_protocol", "openai"),
         base_url=task.base_url,
         endpoint=task.endpoint,
         model=task.model,
@@ -113,6 +114,7 @@ def _task_out(
         max_output_tokens=task.max_output_tokens,
         enable_stream=task.enable_stream,
         matrix_mode=task.matrix_mode,
+        expected_metrics=config.get("expected_metrics"),
         created_at=task.created_at,
         started_at=task.started_at,
         completed_at=task.completed_at,

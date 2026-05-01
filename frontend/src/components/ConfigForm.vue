@@ -195,6 +195,159 @@
             show-icon
             :closable="false"
           />
+          <div class="target-estimator" :class="{ disabled: form.matrix_mode }">
+            <div class="target-head">
+              <div>
+                <h3>按预期反推测试参数</h3>
+                <p>先选择目标模式和 Token 规模，点击应用后会同步修改上方真实测试参数。</p>
+              </div>
+              <el-tag :type="form.matrix_mode ? 'warning' : 'success'" effect="plain">
+                {{ form.matrix_mode ? '矩阵模式不可用' : '单点测试可同步' }}
+              </el-tag>
+            </div>
+            <div class="target-presets" role="list" aria-label="预期吞吐目标模板">
+              <button
+                v-for="preset in throughputTargets"
+                :key="preset.key"
+                type="button"
+                class="target-preset"
+                :class="{ active: activeTargetKey === preset.key }"
+                :disabled="form.matrix_mode"
+                role="listitem"
+                @click="applyThroughputTarget(preset)"
+              >
+                <span>{{ preset.label }}</span>
+                <strong>{{ targetPresetMainText(preset) }}</strong>
+                <em>{{ preset.input_tokens.toLocaleString() }} in / {{ preset.max_output_tokens }} out / {{ preset.assumed_latency_sec }}s</em>
+              </button>
+            </div>
+            <div class="target-mode-row">
+              <span>反推模式</span>
+              <el-segmented
+                v-model="targetEstimate.mode"
+                :options="targetModeOptions"
+                :disabled="form.matrix_mode"
+              />
+            </div>
+            <div class="target-grid">
+              <el-form-item v-if="targetEstimate.mode === 'rpm'" label="目标 RPM">
+                <el-input-number
+                  v-model="targetEstimate.rpm"
+                  :min="1"
+                  :max="1000000"
+                  :step="100"
+                  controls-position="right"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+              <el-form-item v-else label="目标 TPM">
+                <el-input-number
+                  v-model="targetEstimate.tpm"
+                  :min="1"
+                  :max="10000000000"
+                  :step="100000"
+                  controls-position="right"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+              <el-form-item label="假设单请求耗时">
+                <el-segmented
+                  v-model="targetEstimate.latencySec"
+                  :options="latencyAssumptionOptions"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+              <el-form-item label="输入 Token">
+                <el-input-number
+                  v-model="targetEstimate.inputTokens"
+                  :min="1"
+                  :step="1000"
+                  controls-position="right"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+              <el-form-item label="最大输出 Token">
+                <el-input-number
+                  v-model="targetEstimate.outputTokens"
+                  :min="1"
+                  :max="65536"
+                  :step="128"
+                  controls-position="right"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+              <el-form-item label="建议测试时长">
+                <el-input-number
+                  v-model="targetEstimate.durationSec"
+                  :min="1"
+                  :max="86400"
+                  :step="30"
+                  controls-position="right"
+                  :disabled="form.matrix_mode"
+                />
+              </el-form-item>
+            </div>
+            <div class="target-summary-grid">
+              <div>
+                <span>目标 RPM</span>
+                <strong>{{ targetRpmText }}</strong>
+                <em>反推后的每分钟请求数</em>
+              </div>
+              <div>
+                <span>目标 TPM</span>
+                <strong>{{ targetTpmText }}</strong>
+                <em>目标 RPM x 单请求总 Token</em>
+              </div>
+              <div>
+                <span>目标 TPS</span>
+                <strong>{{ targetTpsText }}</strong>
+                <em>目标 TPM / 60</em>
+              </div>
+              <div>
+                <span>预计总 Token</span>
+                <strong>{{ targetTotalTokensText }}</strong>
+                <em>{{ targetEstimatedRequestsText }} 请求</em>
+              </div>
+            </div>
+            <div class="target-result">
+              <div>
+                <span>将同步并发数</span>
+                <strong>{{ targetConcurrencyText }}</strong>
+                <em>并发 ≈ 目标 RPM x 单请求耗时 / 60</em>
+              </div>
+              <div>
+                <span>配置解释</span>
+                <strong>{{ targetExplanation }}</strong>
+                <em>真实结果会受限流、重试、网络和模型速度影响</em>
+              </div>
+              <el-button
+                type="primary"
+                :disabled="form.matrix_mode"
+                @click="applyTargetEstimate"
+              >
+                应用到测试参数
+              </el-button>
+            </div>
+            <div v-if="targetRiskItems.length" class="target-risk-list">
+              <el-alert
+                v-for="item in targetRiskItems"
+                :key="item.title"
+                :title="item.title"
+                :description="item.description"
+                :type="item.type"
+                show-icon
+                :closable="false"
+              />
+            </div>
+            <el-alert
+              v-if="form.matrix_mode"
+              title="矩阵测试请使用下方输入 Token 列表和并发列表"
+              description="反推配置只面向单点测试，避免覆盖矩阵里的多组测试组合。"
+              type="warning"
+              show-icon
+              :closable="false"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -362,6 +515,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ChatLineRound, Check, Connection, Cpu, Document, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const emit = defineEmits(['submit', 'change'])
 
@@ -408,6 +562,15 @@ const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
 const assumedLatencySec = ref(10)
+const targetEstimate = reactive({
+  mode: 'rpm',
+  rpm: 300,
+  tpm: 338400,
+  latencySec: 10,
+  inputTokens: 1000,
+  outputTokens: 128,
+  durationSec: 120
+})
 const tokenOptions = [
   { label: '1k', value: '1000' },
   { label: '10k', value: '10000' },
@@ -419,6 +582,67 @@ const latencyAssumptionOptions = [
   { label: '10s', value: 10 },
   { label: '30s', value: 30 },
   { label: '60s', value: 60 }
+]
+const targetModeOptions = [
+  { label: '按 RPM 目标', value: 'rpm' },
+  { label: '按 TPM 目标', value: 'tpm' }
+]
+const throughputTargets = [
+  {
+    key: 'connectivity',
+    label: '连通性验证',
+    mode: 'rpm',
+    target_rpm: 60,
+    target_tpm: null,
+    assumed_latency_sec: 5,
+    input_tokens: 1000,
+    max_output_tokens: 128,
+    duration_sec: 30
+  },
+  {
+    key: 'small-observe',
+    label: '小流量观察',
+    mode: 'rpm',
+    target_rpm: 300,
+    target_tpm: null,
+    assumed_latency_sec: 10,
+    input_tokens: 2000,
+    max_output_tokens: 256,
+    duration_sec: 120
+  },
+  {
+    key: 'throughput-probe',
+    label: '请求吞吐摸底',
+    mode: 'rpm',
+    target_rpm: 1200,
+    target_tpm: null,
+    assumed_latency_sec: 10,
+    input_tokens: 10000,
+    max_output_tokens: 256,
+    duration_sec: 300
+  },
+  {
+    key: 'token-throughput',
+    label: 'Token 吞吐摸底',
+    mode: 'tpm',
+    target_rpm: null,
+    target_tpm: 10000000,
+    assumed_latency_sec: 10,
+    input_tokens: 10000,
+    max_output_tokens: 256,
+    duration_sec: 300
+  },
+  {
+    key: 'long-context',
+    label: '长上下文稳定性',
+    mode: 'rpm',
+    target_rpm: 120,
+    target_tpm: null,
+    assumed_latency_sec: 30,
+    input_tokens: 100000,
+    max_output_tokens: 512,
+    duration_sec: 300
+  }
 ]
 const testPresets = [
   {
@@ -654,6 +878,113 @@ const estimatedTpmText = computed(() => (
 const estimatedTpsText = computed(() => (
   form.matrix_mode ? rangeText(estimatedMatrixTpsRange.value) : number(estimatedSingleTps.value)
 ))
+const targetRpm = computed(() => {
+  if (targetEstimate.mode === 'tpm') {
+    const tokens = targetTokensPerRequest.value || 1
+    return Number(targetEstimate.tpm || 0) / tokens
+  }
+  return Number(targetEstimate.rpm || 0)
+})
+const targetConcurrency = computed(() => {
+  const rpm = targetRpm.value
+  const latency = Number(targetEstimate.latencySec || 0)
+  if (!Number.isFinite(rpm) || !Number.isFinite(latency) || rpm <= 0 || latency <= 0) return 1
+  return Math.min(1000, Math.max(1, Math.ceil((rpm * latency) / 60)))
+})
+const targetRawConcurrency = computed(() => {
+  const rpm = targetRpm.value
+  const latency = Number(targetEstimate.latencySec || 0)
+  if (!Number.isFinite(rpm) || !Number.isFinite(latency) || rpm <= 0 || latency <= 0) return 1
+  return Math.max(1, Math.ceil((rpm * latency) / 60))
+})
+const targetTokensPerRequest = computed(() => (
+  Number(targetEstimate.inputTokens || 0) + Number(targetEstimate.outputTokens || 0)
+))
+const targetTpm = computed(() => (
+  targetEstimate.mode === 'tpm'
+    ? Number(targetEstimate.tpm || 0)
+    : targetRpm.value * targetTokensPerRequest.value
+))
+const targetTps = computed(() => targetTpm.value / 60)
+const targetEstimatedRequests = computed(() => targetRpm.value * Number(targetEstimate.durationSec || 0) / 60)
+const targetTotalTokens = computed(() => targetEstimatedRequests.value * targetTokensPerRequest.value)
+const targetRpmText = computed(() => number(targetRpm.value))
+const targetConcurrencyText = computed(() => {
+  const concurrency = targetConcurrency.value
+  const suffix = targetRawConcurrency.value > 1000 ? '（已按表单上限截断）' : ''
+  return `${number(concurrency)}${suffix}`
+})
+const targetTpmText = computed(() => number(targetTpm.value))
+const targetTpsText = computed(() => number(targetTps.value))
+const targetEstimatedRequestsText = computed(() => number(targetEstimatedRequests.value))
+const targetTotalTokensText = computed(() => compactNumber(targetTotalTokens.value))
+const targetExplanation = computed(() => (
+  `${number(targetConcurrency.value)} 并发打 ${number(targetRpm.value)} RPM`
+))
+const targetRiskItems = computed(() => {
+  if (form.matrix_mode) return []
+  const items = []
+  if (targetRawConcurrency.value > 1000) {
+    items.push({
+      title: '目标超过表单并发上限',
+      description: `按当前目标需要约 ${number(targetRawConcurrency.value)} 并发，应用时会按 1000 并发截断，真实 RPM/TPM 可能达不到预期。`,
+      type: 'warning'
+    })
+  }
+  if (targetConcurrency.value >= 500) {
+    items.push({
+      title: '目标并发较高',
+      description: '建议先用较低目标确认成功率和延迟，再逐步提高吞吐目标。',
+      type: 'warning'
+    })
+  }
+  if (targetTpm.value >= 10000000) {
+    items.push({
+      title: '目标 TPM 较高',
+      description: 'Token 吞吐目标越高，越容易受到模型速度、配额和网关限流影响。',
+      type: 'warning'
+    })
+  }
+  if (Number(targetEstimate.inputTokens || 0) >= 50000) {
+    items.push({
+      title: '输入 Token 很大',
+      description: '长上下文会显著拉高 TTFT 和成本，建议保持较长测试时长观察稳定性。',
+      type: 'info'
+    })
+  }
+  if (targetTotalTokens.value >= 100000000) {
+    items.push({
+      title: '预计总 Token 消耗较大',
+      description: '启动前请确认账号配额、预算和目标 API 的限流策略。',
+      type: 'warning'
+    })
+  }
+  return items
+})
+const expectedMetrics = computed(() => {
+  const rpm = form.matrix_mode ? null : estimatedSingleRpm.value
+  const tpm = form.matrix_mode ? null : estimatedSingleTpm.value
+  const tps = form.matrix_mode ? null : estimatedSingleTps.value
+  const duration = form.matrix_mode
+    ? matrixPointCount.value * Number(form.matrix_duration_sec || 0)
+    : Number(form.duration_sec || 0)
+  const requests = rpm === null ? null : rpm * duration / 60
+  const tokens = requests === null ? null : requests * estimatedTokensPerRequest.value
+  return {
+    mode: form.matrix_mode ? 'matrix_estimate' : targetEstimate.mode,
+    expected_rpm: rpm,
+    expected_tpm: tpm,
+    expected_tps: tps,
+    expected_latency_sec: Number(assumedLatencySec.value || 10),
+    expected_requests: requests,
+    expected_total_tokens: tokens,
+    expected_tokens_per_request: form.matrix_mode ? null : estimatedTokensPerRequest.value,
+    expected_input_tokens: form.matrix_mode ? null : Number(form.input_tokens || 0),
+    expected_output_tokens: form.matrix_mode ? null : Number(form.max_output_tokens || 0),
+    expected_duration_sec: duration,
+    source: 'web_config_estimator'
+  }
+})
 const estimateFormulaText = computed(() => {
   const base = `按 ${assumedLatencySec.value}s 平均请求耗时`
   const thinkTime = Number(form.think_time_ms || 0)
@@ -667,6 +998,18 @@ const activePresetKey = computed(() => {
 const selectedPresetLabel = computed(() => (
   testPresets.find((preset) => preset.key === activePresetKey.value)?.label || '自定义参数'
 ))
+const activeTargetKey = computed(() => {
+  const match = throughputTargets.find((preset) => (
+    targetEstimate.mode === preset.mode &&
+    (preset.mode === 'tpm' || Number(targetEstimate.rpm) === preset.target_rpm) &&
+    (preset.mode !== 'tpm' || Number(targetEstimate.tpm) === preset.target_tpm) &&
+    Number(targetEstimate.latencySec) === preset.assumed_latency_sec &&
+    Number(targetEstimate.inputTokens) === preset.input_tokens &&
+    Number(targetEstimate.outputTokens) === preset.max_output_tokens &&
+    Number(targetEstimate.durationSec) === preset.duration_sec
+  ))
+  return match?.key || ''
+})
 
 function isKnownBaseUrl(value) {
   return domainOptions.some((item) => item.value === value)
@@ -733,6 +1076,11 @@ function rangeText(values) {
   return `${number(min)} - ${number(max)}`
 }
 
+function targetPresetMainText(preset) {
+  if (preset.mode === 'tpm') return `${number(preset.target_tpm)} TPM`
+  return `${number(preset.target_rpm)} RPM`
+}
+
 watch(
   () => form.api_protocol,
   (protocol, previous) => {
@@ -780,11 +1128,15 @@ function applyTokenPreset(value) {
   form.input_tokens = Number(value)
 }
 
-function applyPreset(preset) {
-  Object.assign(form, preset.values)
+function syncTokenPreset() {
   tokenPreset.value = tokenOptions.some((item) => Number(item.value) === Number(form.input_tokens))
     ? String(form.input_tokens)
     : ''
+}
+
+function applyPreset(preset) {
+  Object.assign(form, preset.values)
+  syncTokenPreset()
   formRef.value?.clearValidate([
     'concurrency',
     'duration_sec',
@@ -797,14 +1149,53 @@ function applyPreset(preset) {
   ])
 }
 
+function applyThroughputTarget(preset) {
+  Object.assign(targetEstimate, {
+    mode: preset.mode,
+    rpm: preset.target_rpm || targetEstimate.rpm,
+    tpm: preset.target_tpm || targetEstimate.tpm,
+    latencySec: preset.assumed_latency_sec,
+    inputTokens: preset.input_tokens,
+    outputTokens: preset.max_output_tokens,
+    durationSec: preset.duration_sec
+  })
+}
+
+function applyTargetEstimate() {
+  if (form.matrix_mode) return
+  form.concurrency = targetConcurrency.value
+  form.duration_sec = Number(targetEstimate.durationSec || 60)
+  form.input_tokens = Number(targetEstimate.inputTokens || 1)
+  form.max_output_tokens = Number(targetEstimate.outputTokens || 1)
+  assumedLatencySec.value = Number(targetEstimate.latencySec || 10)
+  syncTokenPreset()
+  ElMessage.success('已同步并发、时长、Token 和耗时假设到测试参数')
+  formRef.value?.clearValidate([
+    'concurrency',
+    'duration_sec',
+    'input_tokens',
+    'max_output_tokens'
+  ])
+}
+
 async function submit() {
   await formRef.value.validate()
-  emit('submit', { ...form })
+  emit('submit', { ...form, expected_metrics: expectedMetrics.value })
 }
 
 function reset() {
   Object.assign(form, defaults)
   tokenPreset.value = '1000'
+  Object.assign(targetEstimate, {
+    mode: 'rpm',
+    rpm: 300,
+    tpm: 338400,
+    latencySec: 10,
+    inputTokens: 1000,
+    outputTokens: 128,
+    durationSec: 120
+  })
+  assumedLatencySec.value = 10
   formRef.value?.clearValidate()
 }
 </script>
@@ -1066,6 +1457,206 @@ function reset() {
 
 .estimate-note {
   margin-top: 2px;
+}
+
+.target-estimator {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.target-estimator.disabled {
+  border-color: #fed7aa;
+  background: #fffaf3;
+}
+
+.target-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.target-head h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.target-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.target-presets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.target-preset {
+  display: flex;
+  min-height: 92px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #d8e0ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1e293b;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.target-preset:hover:not(:disabled) {
+  border-color: #93b4e8;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.target-preset:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+
+.target-preset.active {
+  border-color: #2563eb;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+
+.target-preset:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.target-preset span,
+.target-preset em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.target-preset span {
+  color: #1e293b;
+  font-weight: 800;
+}
+
+.target-preset strong {
+  color: #2563eb;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.target-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.target-mode-row span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.target-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.target-summary-grid > div {
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.target-summary-grid span,
+.target-summary-grid em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.target-summary-grid strong {
+  display: block;
+  margin: 6px 0 4px;
+  overflow: hidden;
+  color: #2563eb;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-result {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.target-result > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.target-result span,
+.target-result em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.target-result strong {
+  display: block;
+  margin: 6px 0 4px;
+  overflow: hidden;
+  color: #0f766e;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-result .el-button {
+  align-self: stretch;
+  min-height: 72px;
+}
+
+.target-risk-list {
+  display: grid;
+  gap: 10px;
 }
 
 .action-summary {
@@ -1400,6 +1991,16 @@ function reset() {
   .estimate-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .target-presets,
+  .target-grid,
+  .target-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .target-result {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1425,6 +2026,21 @@ function reset() {
   }
 
   .estimate-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .target-head {
+    flex-direction: column;
+  }
+
+  .target-mode-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .target-presets,
+  .target-grid,
+  .target-summary-grid {
     grid-template-columns: 1fr;
   }
 

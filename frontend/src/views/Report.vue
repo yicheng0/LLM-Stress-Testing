@@ -135,6 +135,33 @@
     <template v-else>
       <MetricCards :items="metricItems" />
 
+      <div v-if="hasExpectedMetrics" class="section">
+        <div class="section-header">
+          <h2 class="section-title">预期 vs 实测</h2>
+          <el-tag :type="expectationStatus.type" effect="plain">{{ expectationStatus.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="expectation-grid">
+            <div v-for="item in expectationCards" :key="item.label" class="expectation-card" :class="item.type">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.description }}</em>
+            </div>
+          </div>
+          <div class="expectation-list">
+            <el-alert
+              v-for="item in expectationAdvice"
+              :key="item.title"
+              :title="item.title"
+              :description="item.description"
+              :type="item.type"
+              show-icon
+              :closable="false"
+            />
+          </div>
+        </div>
+      </div>
+
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">容量与性能诊断</h2>
@@ -286,6 +313,8 @@ const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
 const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
+const expectedMetrics = computed(() => config.value.expected_metrics || summary.value?.config?.expected_metrics || null)
+const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
 const downloadItems = computed(() => [
   { kind: 'html', label: 'HTML 可视化报告' },
   { kind: 'markdown', label: 'Markdown 报告' },
@@ -300,6 +329,102 @@ const metricItems = computed(() => [
   { label: 'RPM', value: number(results.value.rpm), sub: `QPS ${number(results.value.qps)}`, color: '#f97316' },
   { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' }
 ])
+
+const rpmAchievement = computed(() => achievementRatio(results.value.rpm, expectedMetrics.value?.expected_rpm))
+const tpmAchievement = computed(() => achievementRatio(results.value.total_tpm, expectedMetrics.value?.expected_tpm))
+const tpsAchievement = computed(() => achievementRatio(results.value.total_tps, expectedMetrics.value?.expected_tps))
+const expectationStatus = computed(() => {
+  const ratios = [rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null)
+  if (!ratios.length) return { label: '缺少预期', type: 'info' }
+  const minRatio = Math.min(...ratios)
+  if (minRatio >= 0.9) return { label: '达到预期', type: 'success' }
+  if (minRatio >= 0.6) return { label: '部分达成', type: 'warning' }
+  return { label: '明显偏低', type: 'danger' }
+})
+const expectationCards = computed(() => [
+  {
+    label: 'RPM 达成率',
+    value: percentRatio(rpmAchievement.value),
+    description: `预期 ${number(expectedMetrics.value?.expected_rpm)} / 实测 ${number(results.value.rpm)}`,
+    type: expectationType(rpmAchievement.value)
+  },
+  {
+    label: 'TPM 达成率',
+    value: percentRatio(tpmAchievement.value),
+    description: `预期 ${number(expectedMetrics.value?.expected_tpm)} / 实测 ${number(results.value.total_tpm)}`,
+    type: expectationType(tpmAchievement.value)
+  },
+  {
+    label: 'TPS 达成率',
+    value: percentRatio(tpsAchievement.value),
+    description: `预期 ${number(expectedMetrics.value?.expected_tps)} / 实测 ${number(results.value.total_tps)}`,
+    type: expectationType(tpsAchievement.value)
+  },
+  {
+    label: '预计消耗',
+    value: compactNumber(expectedMetrics.value?.expected_total_tokens),
+    description: `${number(expectedMetrics.value?.expected_requests)} 请求 / ${number(expectedMetrics.value?.expected_latency_sec)}s 假设耗时`,
+    type: 'ok'
+  }
+])
+const expectationAdvice = computed(() => {
+  const items = []
+  const minRatio = Math.min(...[rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null), 1)
+  const successRate = Number(results.value.success_rate || 0)
+  const p95 = Number(results.value.latency_sec_p95 || 0)
+  const avgLatency = Number(results.value.latency_sec_avg || 0)
+  const expectedLatency = Number(expectedMetrics.value?.expected_latency_sec || 0)
+  if (successRate < 0.99) {
+    items.push({
+      title: '成功率拉低了吞吐达成率',
+      description: '先看错误分布和请求明细，常见原因是限流、超时、认证失败或 5xx。',
+      type: 'warning'
+    })
+  }
+  if (expectedLatency && avgLatency > expectedLatency * 1.5) {
+    items.push({
+      title: '平均耗时假设偏乐观',
+      description: `启动前按 ${number(expectedLatency)}s 估算，实测平均 ${seconds(avgLatency)}，因此 RPM/TPM 会低于预期。`,
+      type: 'warning'
+    })
+  }
+  if (p95 >= 10) {
+    items.push({
+      title: '尾延迟偏高',
+      description: 'P95/P99 偏高通常代表排队、模型响应慢或网络抖动，建议降低并发或拆分长上下文测试。',
+      type: 'warning'
+    })
+  }
+  if (config.value.enable_stream && bottleneckText.value === 'Prefill / 排队') {
+    items.push({
+      title: 'TTFT 偏高，优先排查排队或输入预填充',
+      description: '长输入、高并发或服务端排队都会让首 token 变慢，进而降低请求吞吐。',
+      type: 'info'
+    })
+  }
+  if (config.value.enable_stream && bottleneckText.value === 'Decode') {
+    items.push({
+      title: 'Decode 占比较高，可能受输出生成速度限制',
+      description: '可以降低最大输出 Token 或单独测试输出长度对吞吐的影响。',
+      type: 'info'
+    })
+  }
+  if (!items.length && minRatio >= 0.9) {
+    items.push({
+      title: '本次测试基本达到启动前预期',
+      description: '可以把当前配置作为基线，再通过矩阵测试探索更高并发或更长上下文。',
+      type: 'success'
+    })
+  }
+  if (!items.length) {
+    items.push({
+      title: '结果低于预期但没有明显错误',
+      description: '通常是平均耗时假设过低、服务端限速或模型实际生成速度不足导致。',
+      type: 'info'
+    })
+  }
+  return items
+})
 
 const diagnosticStatus = computed(() => {
   if (Number(results.value.failed_requests || 0) > 0 || Number(results.value.success_rate || 1) < 0.99) {
@@ -717,6 +842,25 @@ function formatMetricValue(value, field, compact = false) {
   return number(value)
 }
 
+function achievementRatio(actual, expected) {
+  const actualValue = Number(actual)
+  const expectedValue = Number(expected)
+  if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue) || expectedValue <= 0) return null
+  return actualValue / expectedValue
+}
+
+function percentRatio(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+  return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+function expectationType(value) {
+  if (value === null || value === undefined) return 'ok'
+  if (value >= 0.9) return 'ok'
+  if (value >= 0.6) return 'warning'
+  return 'danger'
+}
+
 function openDownload(kind) {
   if (kind === 'pdf') {
     const url = router.resolve({
@@ -831,6 +975,56 @@ onMounted(loadReport)
   gap: 12px;
 }
 
+.expectation-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.expectation-card {
+  min-height: 108px;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-left: 3px solid #16a34a;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.expectation-card.warning {
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
+.expectation-card.danger {
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.expectation-card span,
+.expectation-card em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.expectation-card strong {
+  display: block;
+  margin: 8px 0 6px;
+  color: #1e293b;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 22px;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.expectation-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .diagnostic-card {
   min-height: 112px;
   padding: 14px;
@@ -869,6 +1063,7 @@ onMounted(loadReport)
     width: 100%;
   }
 
+  .expectation-grid,
   .diagnostic-grid {
     grid-template-columns: 1fr;
   }

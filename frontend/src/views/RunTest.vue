@@ -9,6 +9,23 @@
     />
 
     <MetricCards :items="metricItems" />
+    <div v-if="hasExpectedMetrics" class="section">
+      <div class="section-header">
+        <h2 class="section-title">预期达成</h2>
+        <el-tag :type="achievementStatus.type" effect="plain">{{ achievementStatus.label }}</el-tag>
+      </div>
+      <div class="section-body">
+        <MetricCards :items="achievementItems" />
+        <el-alert
+          class="achievement-note"
+          :title="achievementAdvice.title"
+          :description="achievementAdvice.description"
+          :type="achievementAdvice.type"
+          show-icon
+          :closable="false"
+        />
+      </div>
+    </div>
     <RunDiagnostics :progress="progress" :logs="logs" :socket-status="socketStatus" />
 
     <div class="run-grid">
@@ -109,6 +126,64 @@ const metricItems = computed(() => [
     color: '#334155'
   }
 ])
+
+const expectedMetrics = computed(() => task.value?.expected_metrics || task.value?.summary?.config?.expected_metrics || null)
+const hasExpectedMetrics = computed(() => Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
+const rpmAchievement = computed(() => achievementRatio(progress.value?.current_rpm, expectedMetrics.value?.expected_rpm))
+const tpmAchievement = computed(() => achievementRatio(progress.value?.current_tpm, expectedMetrics.value?.expected_tpm))
+const achievementStatus = computed(() => {
+  const ratios = [rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null)
+  if (!ratios.length) return { label: '等待数据', type: 'info' }
+  const minRatio = Math.min(...ratios)
+  if (minRatio >= 0.9) return { label: '接近预期', type: 'success' }
+  if (minRatio >= 0.6) return { label: '低于预期', type: 'warning' }
+  return { label: '明显低于预期', type: 'danger' }
+})
+const achievementItems = computed(() => [
+  {
+    label: 'RPM 达成率',
+    value: formatAchievement(rpmAchievement.value),
+    sub: `${formatNumber(progress.value?.current_rpm)} / ${formatNumber(expectedMetrics.value?.expected_rpm)}`,
+    color: achievementColor(rpmAchievement.value)
+  },
+  {
+    label: 'TPM 达成率',
+    value: formatAchievement(tpmAchievement.value),
+    sub: `${formatNumber(progress.value?.current_tpm)} / ${formatNumber(expectedMetrics.value?.expected_tpm)}`,
+    color: achievementColor(tpmAchievement.value)
+  },
+  {
+    label: '预期 TPS',
+    value: formatNumber(expectedMetrics.value?.expected_tps),
+    sub: `当前 ${formatNumber(progress.value?.current_tpm ? Number(progress.value.current_tpm) / 60 : null)}`,
+    color: '#334155'
+  },
+  {
+    label: '预计总 Token',
+    value: compactNumber(expectedMetrics.value?.expected_total_tokens),
+    sub: `${formatNumber(expectedMetrics.value?.expected_requests)} 请求`,
+    color: '#0f766e'
+  }
+])
+const achievementAdvice = computed(() => {
+  if (!hasExpectedMetrics.value) {
+    return { title: '暂无预期快照', description: '旧任务可能没有启动前预期指标。', type: 'info' }
+  }
+  const successRate = Number(progress.value?.success_rate ?? 1)
+  const avgLatency = Number(progress.value?.avg_latency_sec || 0)
+  const expectedLatency = Number(expectedMetrics.value?.expected_latency_sec || 0)
+  const minRatio = Math.min(...[rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null), 1)
+  if (successRate < 0.99) {
+    return { title: '先看错误和限流', description: '成功率低时，吞吐达成率会被失败请求拉低，建议优先排查错误分布。', type: 'warning' }
+  }
+  if (expectedLatency && avgLatency > expectedLatency * 1.5) {
+    return { title: '实际耗时高于假设', description: '当前平均延迟明显高于启动前假设，真实 RPM/TPM 低于预期是正常现象。', type: 'warning' }
+  }
+  if (minRatio < 0.6) {
+    return { title: '吞吐明显低于预期', description: '如果成功率正常，可能是平均耗时假设过乐观、服务端排队或模型生成速度不足。', type: 'warning' }
+  }
+  return { title: '运行中指标可作为参考', description: '最终判断仍以完成后的报告为准，尤其是 P95/P99 和错误分布。', type: 'info' }
+})
 
 async function loadTask() {
   loading.value = true
@@ -221,9 +296,33 @@ function formatNumber(value) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
+function compactNumber(value) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
+  return Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
+}
+
 function formatPercent(value) {
   if (value === undefined || value === null) return '-'
   return `${(Number(value) * 100).toFixed(2)}%`
+}
+
+function achievementRatio(actual, expected) {
+  const actualValue = Number(actual)
+  const expectedValue = Number(expected)
+  if (!Number.isFinite(actualValue) || !Number.isFinite(expectedValue) || expectedValue <= 0) return null
+  return actualValue / expectedValue
+}
+
+function formatAchievement(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
+  return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+function achievementColor(value) {
+  if (value === null || value === undefined) return '#64748b'
+  if (value >= 0.9) return '#16a34a'
+  if (value >= 0.6) return '#f97316'
+  return '#dc2626'
 }
 
 function formatSeconds(value) {
@@ -345,6 +444,10 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) 420px;
   gap: 16px;
   margin-top: 16px;
+}
+
+.achievement-note {
+  margin-top: 12px;
 }
 
 @media (max-width: 1180px) {

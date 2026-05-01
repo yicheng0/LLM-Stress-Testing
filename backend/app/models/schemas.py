@@ -34,6 +34,7 @@ class TestCreate(BaseModel):
     input_tokens_list: str = ""
     concurrency_list: str = ""
     matrix_duration_sec: int = Field(default=60, ge=1, le=86400)
+    expected_metrics: dict[str, Any] | None = None
 
 
 class TestTaskOut(BaseModel):
@@ -50,6 +51,7 @@ class TestTaskOut(BaseModel):
     max_output_tokens: int
     enable_stream: bool
     matrix_mode: bool
+    expected_metrics: dict[str, Any] | None = None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
@@ -98,3 +100,21 @@ class DetailsOut(BaseModel):
 class CleanupOut(BaseModel):
     deleted: int
     retention_hours: int
+
+
+class CurlConvertRequest(BaseModel):
+    curl: str = Field(..., min_length=1)
+    base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
+    title: str = Field(default="LLM API 接口文档", min_length=1, max_length=120)
+
+
+class CurlConvertOut(BaseModel):
+    protocol: Literal["openai", "anthropic", "gemini"]
+    method: str
+    endpoint: str
+    model: str | None = None
+    sanitized_curl: str
+    openapi_yaml: str
+    recognized_params: list[str]
+    unknown_params: list[str]
+    warnings: list[str]
