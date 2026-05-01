@@ -91,10 +91,13 @@ if ($UpdatedPackageJson -eq $PackageJson) {
 [System.IO.File]::WriteAllText($PackageJsonPath, $UpdatedPackageJson, [System.Text.UTF8Encoding]::new($false))
 
 $PackageLock = Get-Content -Raw -Path $PackageLockPath
-$UpdatedPackageLock = [regex]::Replace($PackageLock, $PackageVersionPattern, $PackageVersionReplacement, 2)
-if ($UpdatedPackageLock -eq $PackageLock) {
-    throw "Could not update version in frontend/package-lock.json."
+$PackageLockInfo = $PackageLock | ConvertFrom-Json -AsHashTable
+$PackageLockInfo["version"] = $NextVersion
+if (-not $PackageLockInfo.ContainsKey("packages") -or -not $PackageLockInfo["packages"].ContainsKey("")) {
+    throw "Could not find root package entry in frontend/package-lock.json."
 }
+$PackageLockInfo["packages"][""]["version"] = $NextVersion
+$UpdatedPackageLock = $PackageLockInfo | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($PackageLockPath, $UpdatedPackageLock, [System.Text.UTF8Encoding]::new($false))
 
 $BackendVersion = Get-Content -Raw -Path $BackendVersionPath
