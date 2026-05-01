@@ -23,6 +23,10 @@
           <el-icon><Document /></el-icon>
           <span>参数说明</span>
         </el-menu-item>
+        <el-menu-item index="/help/metrics">
+          <el-icon><TrendCharts /></el-icon>
+          <span>指标科普</span>
+        </el-menu-item>
         <el-menu-item index="/dashboard/realtime">
           <el-icon><DataAnalysis /></el-icon>
           <span>实时面板</span>
@@ -77,7 +81,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, DataAnalysis, Document, Plus, Refresh } from '@element-plus/icons-vue'
+import { Clock, DataAnalysis, Document, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
 import packageInfo from '../package.json'
 
 const route = useRoute()
@@ -88,6 +92,7 @@ const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'
   if (route.path.startsWith('/compare')) return '/history'
+  if (route.path.startsWith('/help/metrics')) return '/help/metrics'
   if (route.path.startsWith('/help')) return '/help/parameters'
   if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
   return '/tests/new'
@@ -99,6 +104,7 @@ const routeTitle = computed(() => route.meta?.title || {
   history: '历史记录',
   compare: '测试对比',
   'parameter-help': '参数说明',
+  'metrics-help': '指标科普',
   'realtime-dashboard': '实时数据面板'
 }[route.name] || '性能测试')
 

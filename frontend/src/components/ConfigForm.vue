@@ -157,6 +157,50 @@
 
     <div class="section">
       <div class="section-header">
+        <h2 class="section-title">预期吞吐估算</h2>
+        <div class="toolbar">
+          <span class="muted">假设单请求平均耗时</span>
+          <el-segmented v-model="assumedLatencySec" :options="latencyAssumptionOptions" />
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="estimate-panel">
+          <div class="estimate-cards">
+            <div>
+              <span>预期 RPM</span>
+              <strong>{{ estimatedRpmText }}</strong>
+              <em>{{ form.matrix_mode ? '矩阵区间' : '每分钟成功请求数' }}</em>
+            </div>
+            <div>
+              <span>预期 TPM</span>
+              <strong>{{ estimatedTpmText }}</strong>
+              <em>{{ form.matrix_mode ? '矩阵区间' : '每分钟总 Token' }}</em>
+            </div>
+            <div>
+              <span>预期 TPS</span>
+              <strong>{{ estimatedTpsText }}</strong>
+              <em>{{ form.matrix_mode ? '矩阵区间' : '每秒总 Token' }}</em>
+            </div>
+            <div>
+              <span>单请求总 Token</span>
+              <strong>{{ form.matrix_mode ? estimatedMatrixTokenRangeText : number(estimatedTokensPerRequest) }}</strong>
+              <em>输入 + 最大输出</em>
+            </div>
+          </div>
+          <el-alert
+            class="estimate-note"
+            title="这是启动前预期，不是服务承诺"
+            :description="estimateFormulaText"
+            type="info"
+            show-icon
+            :closable="false"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
         <h2 class="section-title">高级配置</h2>
       </div>
       <div class="section-body">
@@ -295,12 +339,13 @@
               <div><span>预热请求</span><strong>{{ number(form.warmup_requests) }}</strong></div>
             </div>
             <div class="preview-section">
-              <h4>理论压力估算</h4>
+              <h4>预期吞吐估算</h4>
               <div><span>组合数</span><strong>{{ matrixPointCount }} 组</strong></div>
               <div><span>估算总时长</span><strong>{{ estimatedTotalDurationText }}</strong></div>
-              <div><span>理论 RPM</span><strong>{{ estimatedRpmText }}</strong></div>
-              <div><span>理论 TPM</span><strong>{{ estimatedTpmText }}</strong></div>
-              <div><span>理论 TPS</span><strong>{{ estimatedTpsText }}</strong></div>
+              <div><span>假设耗时</span><strong>{{ assumedLatencySec }}s / 请求</strong></div>
+              <div><span>预期 RPM</span><strong>{{ estimatedRpmText }}</strong></div>
+              <div><span>预期 TPM</span><strong>{{ estimatedTpmText }}</strong></div>
+              <div><span>预期 TPS</span><strong>{{ estimatedTpsText }}</strong></div>
               <div><span>单请求 Token</span><strong>{{ number(estimatedTokensPerRequest) }}</strong></div>
             </div>
           </div>
@@ -362,10 +407,18 @@ const formRef = ref()
 const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
+const assumedLatencySec = ref(10)
 const tokenOptions = [
   { label: '1k', value: '1000' },
   { label: '10k', value: '10000' },
   { label: '100k', value: '100000' }
+]
+const latencyAssumptionOptions = [
+  { label: '2s', value: 2 },
+  { label: '5s', value: 5 },
+  { label: '10s', value: 10 },
+  { label: '30s', value: 30 },
+  { label: '60s', value: 60 }
 ]
 const testPresets = [
   {
@@ -560,17 +613,17 @@ const matrixGridStyle = computed(() => ({
   gridTemplateColumns: `minmax(92px, 0.8fr) repeat(${Math.max(1, matrixConcurrencyValues.value.length)}, minmax(112px, 1fr))`
 }))
 const estimatedTokensPerRequest = computed(() => Number(form.input_tokens || 0) + Number(form.max_output_tokens || 0))
+const effectiveAssumedLatencySec = computed(() => (
+  Math.max(0.001, Number(assumedLatencySec.value || 10) + Number(form.think_time_ms || 0) / 1000)
+))
 const estimatedSingleRpm = computed(() => {
-  const duration = Number(form.duration_sec || 0)
-  if (duration <= 0) return 0
-  return Number(form.concurrency || 0) * 60 / duration
+  return Number(form.concurrency || 0) / effectiveAssumedLatencySec.value * 60
 })
 const estimatedSingleTpm = computed(() => estimatedSingleRpm.value * estimatedTokensPerRequest.value)
 const estimatedSingleTps = computed(() => estimatedSingleTpm.value / 60)
 const estimatedMatrixRpmRange = computed(() => {
-  const duration = Number(form.matrix_duration_sec || 0)
-  if (duration <= 0 || !matrixConcurrencyValues.value.length) return [0, 0]
-  const values = matrixConcurrencyValues.value.map((item) => item * 60 / duration)
+  if (!matrixConcurrencyValues.value.length) return [0, 0]
+  const values = matrixConcurrencyValues.value.map((item) => item / effectiveAssumedLatencySec.value * 60)
   return [Math.min(...values), Math.max(...values)]
 })
 const estimatedMatrixTpmRange = computed(() => {
@@ -580,6 +633,12 @@ const estimatedMatrixTpmRange = computed(() => {
   return [minRpm * Math.min(...tokenValues), maxRpm * Math.max(...tokenValues)]
 })
 const estimatedMatrixTpsRange = computed(() => estimatedMatrixTpmRange.value.map((item) => item / 60))
+const estimatedMatrixTokenRange = computed(() => {
+  if (!matrixInputValues.value.length) return [0, 0]
+  const tokenValues = matrixInputValues.value.map((item) => item + Number(form.max_output_tokens || 0))
+  return [Math.min(...tokenValues), Math.max(...tokenValues)]
+})
+const estimatedMatrixTokenRangeText = computed(() => rangeText(estimatedMatrixTokenRange.value))
 const estimatedTotalDurationText = computed(() => {
   const seconds = form.matrix_mode
     ? matrixPointCount.value * Number(form.matrix_duration_sec || 0)
@@ -595,6 +654,12 @@ const estimatedTpmText = computed(() => (
 const estimatedTpsText = computed(() => (
   form.matrix_mode ? rangeText(estimatedMatrixTpsRange.value) : number(estimatedSingleTps.value)
 ))
+const estimateFormulaText = computed(() => {
+  const base = `按 ${assumedLatencySec.value}s 平均请求耗时`
+  const thinkTime = Number(form.think_time_ms || 0)
+  const suffix = thinkTime > 0 ? ` + ${thinkTime}ms 请求间隔` : ''
+  return `${base}${suffix} 估算：RPM ≈ 并发 / 单请求耗时 x 60；TPM ≈ RPM x 单请求总 Token。真实值会受模型速度、限流、重试、网络和输出长度影响。`
+})
 const activePresetKey = computed(() => {
   const match = testPresets.find((preset) => Object.entries(preset.values).every(([key, value]) => form[key] === value))
   return match?.key || ''
@@ -961,6 +1026,48 @@ function reset() {
   backdrop-filter: blur(10px);
 }
 
+.estimate-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.estimate-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.estimate-cards > div {
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.estimate-cards span,
+.estimate-cards em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.estimate-cards strong {
+  display: block;
+  margin: 7px 0 4px;
+  overflow: hidden;
+  color: #2563eb;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estimate-note {
+  margin-top: 2px;
+}
+
 .action-summary {
   display: flex;
   min-width: 0;
@@ -1289,6 +1396,10 @@ function reset() {
   .preview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .estimate-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -1310,6 +1421,10 @@ function reset() {
   }
 
   .preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-cards {
     grid-template-columns: 1fr;
   }
 
