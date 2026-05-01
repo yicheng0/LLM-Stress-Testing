@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import settings
+from backend.app.api.docs import router as docs_router
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.core.progress import ProgressHub
@@ -38,6 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(tests_router)
+app.include_router(docs_router)
 app.include_router(websocket_router)
 
 

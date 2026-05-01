@@ -31,6 +31,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>实时面板</span>
         </el-menu-item>
+        <el-menu-item index="/docs/curl-to-openapi">
+          <el-icon><DocumentAdd /></el-icon>
+          <span>文档生成</span>
+        </el-menu-item>
       </el-menu>
 
       <div class="sidebar-info">
@@ -81,7 +85,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, DataAnalysis, Document, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { Clock, DataAnalysis, Document, DocumentAdd, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
 import packageInfo from '../package.json'
 
 const route = useRoute()
@@ -95,6 +99,7 @@ const activePath = computed(() => {
   if (route.path.startsWith('/help/metrics')) return '/help/metrics'
   if (route.path.startsWith('/help')) return '/help/parameters'
   if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
+  if (route.path.startsWith('/docs')) return '/docs/curl-to-openapi'
   return '/tests/new'
 })
 const routeTitle = computed(() => route.meta?.title || {
@@ -105,7 +110,8 @@ const routeTitle = computed(() => route.meta?.title || {
   compare: '测试对比',
   'parameter-help': '参数说明',
   'metrics-help': '指标科普',
-  'realtime-dashboard': '实时数据面板'
+  'realtime-dashboard': '实时数据面板',
+  'curl-to-openapi': '文档生成'
 }[route.name] || '性能测试')
 
 const today = new Intl.DateTimeFormat('zh-CN', {

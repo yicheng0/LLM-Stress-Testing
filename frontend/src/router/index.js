@@ -16,7 +16,8 @@ const routes = [
   { path: '/compare', name: 'compare', component: () => import('../views/Compare.vue') },
   { path: '/help/parameters', name: 'parameter-help', component: () => import('../views/ParameterHelp.vue') },
   { path: '/help/metrics', name: 'metrics-help', component: () => import('../views/MetricsHelp.vue') },
-  { path: '/dashboard/realtime', name: 'realtime-dashboard', component: () => import('../views/RealtimeDashboard.vue') }
+  { path: '/dashboard/realtime', name: 'realtime-dashboard', component: () => import('../views/RealtimeDashboard.vue') },
+  { path: '/docs/curl-to-openapi', name: 'curl-to-openapi', component: () => import('../views/CurlToOpenApi.vue') }
 ]
 
 export default createRouter({

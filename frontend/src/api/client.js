@@ -48,6 +48,13 @@ export function getRealtimeDashboard() {
   return request('/api/tests/dashboard/realtime')
 }
 
+export function convertCurlToOpenApi(payload) {
+  return request('/api/docs/convert-curl', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
 export function getTest(id) {
   return request(`/api/tests/${id}`)
 }
