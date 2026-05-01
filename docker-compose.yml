@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/llm_test.db}
+      RESULTS_DIR: ${RESULTS_DIR:-./results}
+      MAX_RUNNING_TESTS: ${MAX_RUNNING_TESTS:-2}
+      MAX_CONCURRENCY_PER_TEST: ${MAX_CONCURRENCY_PER_TEST:-500}
+      RESULT_RETENTION_HOURS: ${RESULT_RETENTION_HOURS:-24}
+      CLEANUP_ON_STARTUP: ${CLEANUP_ON_STARTUP:-true}
+      SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-true}
+      SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-sh /app/scripts/docker-self-update.sh}
+      SELF_UPDATE_TIMEOUT_SEC: ${SELF_UPDATE_TIMEOUT_SEC:-900}
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./results:/app/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${BACKEND_PORT:-18081}:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-18080}:80"
+    restart: unless-stopped

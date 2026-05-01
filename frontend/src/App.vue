@@ -40,7 +40,29 @@
       <div class="sidebar-info">
         <div class="info-block">
           <div class="info-title">版本信息</div>
-          <div class="info-line"><span>版本</span><strong>v{{ appVersion }}</strong></div>
+          <div class="info-line"><span>当前</span><strong>v{{ versionState.current_version || appVersion }}</strong></div>
+          <div class="info-line"><span>本地引用</span><strong class="mono">{{ shortRef(versionState.current_ref) }}</strong></div>
+          <div class="info-line"><span>远端引用</span><strong class="mono">{{ shortRef(versionState.latest_ref) }}</strong></div>
+          <div class="info-line">
+            <span>状态</span>
+            <el-tag :type="versionTagType" effect="plain" size="small">{{ versionStatusText }}</el-tag>
+          </div>
+          <div class="version-actions">
+            <el-button :icon="Refresh" :loading="versionChecking" size="small" @click="checkVersion">
+              检测版本
+            </el-button>
+            <el-button
+              :icon="Download"
+              :disabled="!versionState.update_enabled || !versionState.update_available || !versionState.available"
+              :loading="versionUpdating"
+              size="small"
+              type="primary"
+              @click="confirmUpdate"
+            >
+              更新
+            </el-button>
+          </div>
+          <div class="version-hint">{{ versionState.message || '点击“检测版本”查看远端更新' }}</div>
           <div class="info-line"><span>开发</span><strong>APIPro 团队</strong></div>
         </div>
 
@@ -84,14 +106,34 @@
 
 <script setup>
 import { computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, DataAnalysis, Document, DocumentAdd, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { Clock, DataAnalysis, Download, Document, DocumentAdd, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import packageInfo from '../package.json'
+import { checkVersionInfo, getVersionInfo, updateVersionInfo } from './api/client'
 
 const route = useRoute()
 const router = useRouter()
 const appVersion = packageInfo.version
 const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
+const versionState = ref({
+  available: true,
+  update_enabled: false,
+  current_version: appVersion,
+  current_ref: null,
+  latest_ref: null,
+  branch: null,
+  remote_url: null,
+  ahead_count: null,
+  behind_count: null,
+  dirty: null,
+  update_available: false,
+  message: '点击“检测版本”查看远端更新',
+  checked_at: null
+})
+const versionChecking = ref(false)
+const versionUpdating = ref(false)
 
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'
@@ -122,7 +164,102 @@ const today = new Intl.DateTimeFormat('zh-CN', {
   minute: '2-digit'
 }).format(new Date())
 
+const versionStatusText = computed(() => {
+  if (!versionState.value.available) return '不可用'
+  if (!versionState.value.update_enabled) return '仅检测'
+  if (versionState.value.update_available) return '可更新'
+  if (versionState.value.checked_at) return '已最新'
+  return '未检测'
+})
+
+const versionTagType = computed(() => {
+  if (!versionState.value.available) return 'info'
+  if (!versionState.value.update_enabled) return 'info'
+  if (versionState.value.update_available) return 'warning'
+  if (versionState.value.checked_at) return 'success'
+  return 'info'
+})
+
 function reloadRoute() {
   router.go(0)
 }
+
+function shortRef(value) {
+  if (!value) return '-'
+  return value.length > 12 ? value.slice(0, 12) : value
+}
+
+async function loadVersionInfo() {
+  try {
+    const data = await getVersionInfo()
+    versionState.value = { ...versionState.value, ...data }
+  } catch (error) {
+    versionState.value = {
+      ...versionState.value,
+      available: false,
+      message: error.message
+    }
+  }
+}
+
+async function checkVersion() {
+  versionChecking.value = true
+  try {
+    const data = await checkVersionInfo()
+    versionState.value = { ...versionState.value, ...data }
+    ElMessage.success(data.update_available ? '检测到新版本' : '当前已是最新版本')
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    versionChecking.value = false
+  }
+}
+
+async function confirmUpdate() {
+  if (!versionState.value.update_available) return
+  try {
+    await ElMessageBox.confirm('确认执行在线更新？更新过程中服务可能短暂不可用。', '更新版本', {
+      type: 'warning',
+      confirmButtonText: '更新',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  versionUpdating.value = true
+  try {
+    const result = await updateVersionInfo({})
+    versionState.value = {
+      ...versionState.value,
+      current_ref: result.current_ref || versionState.value.current_ref,
+      latest_ref: result.latest_ref || versionState.value.latest_ref,
+      update_available: false,
+      message: result.message || '更新已完成，请刷新页面'
+    }
+    ElMessage.success(result.message || '更新已完成')
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    versionUpdating.value = false
+  }
+}
+
+onMounted(() => {
+  loadVersionInfo()
+})
 </script>
+
+<style scoped>
+.version-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.version-hint {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+</style>

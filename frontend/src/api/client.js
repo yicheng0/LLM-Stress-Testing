@@ -71,6 +71,21 @@ export function cleanupExpiredTests() {
   return request('/api/tests/cleanup/expired', { method: 'POST' })
 }
 
+export function getVersionInfo() {
+  return request('/api/system/version')
+}
+
+export function checkVersionInfo() {
+  return request('/api/system/version/check', { method: 'POST' })
+}
+
+export function updateVersionInfo(payload = {}) {
+  return request('/api/system/version/update', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
 export function getReport(id) {
   return request(`/api/tests/${id}/report`)
 }

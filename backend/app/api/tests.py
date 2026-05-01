@@ -104,6 +104,122 @@ def _expected_targets(expected_metrics: dict[str, Any] | None) -> dict[str, floa
     }
 
 
+def _achievement_ratio(current: Any, target: Any) -> float | None:
+    current_value = _num(current, None)
+    target_value = _num(target, None)
+    if current_value is None or not target_value:
+        return None
+    return current_value / target_value
+
+
+def _task_issue_tags(
+    status: str,
+    metrics: dict[str, Any],
+    targets: dict[str, float | None],
+    error_message: str | None,
+) -> list[str]:
+    tags: list[str] = []
+    success_rate = _num(metrics.get("success_rate"), None)
+    latency_p95 = _num(metrics.get("latency_p95"), None)
+    rpm_ratio = _achievement_ratio(metrics.get("rpm"), targets.get("rpm"))
+    tpm_ratio = _achievement_ratio(metrics.get("tpm"), targets.get("tpm"))
+    expected_latency = targets.get("latency_sec")
+
+    if status in {"queued", "running", "stopping"}:
+        tags.append("运行中")
+    if status in {"failed", "interrupted", "cancelled"}:
+        tags.append("异常结束")
+    if error_message:
+        tags.append("有错误")
+    if success_rate is not None and success_rate < 0.95:
+        tags.append("低成功率")
+    if latency_p95 is not None and expected_latency and latency_p95 > expected_latency * 1.25:
+        tags.append("延迟高")
+    if rpm_ratio is not None and rpm_ratio < 0.8:
+        tags.append("RPM低")
+    if tpm_ratio is not None and tpm_ratio < 0.8:
+        tags.append("TPM低")
+    return tags[:4]
+
+
+def _dashboard_diagnostics(
+    *,
+    total: int,
+    active_tasks: int,
+    rpm: float,
+    tpm: float,
+    expected_rpm: float,
+    expected_tpm: float,
+    expected_latency_values: list[float],
+    success_rates: list[float],
+    p95_values: list[float],
+    failed_count: int,
+    error_counts: dict[str, int],
+) -> dict[str, Any]:
+    if total == 0:
+        return {
+            "overall_status": "idle",
+            "summary": "暂无测试数据，启动一次压测后可查看实时诊断。",
+            "reasons": [],
+            "actions": [{"type": "new_test", "label": "新建测试"}],
+        }
+
+    reasons: list[str] = []
+    actions: list[dict[str, str]] = []
+    rpm_ratio = _achievement_ratio(rpm, expected_rpm)
+    tpm_ratio = _achievement_ratio(tpm, expected_tpm)
+    success_rate = sum(success_rates) / len(success_rates) if success_rates else None
+    p95 = max(p95_values) if p95_values else None
+    expected_latency = sum(expected_latency_values) / len(expected_latency_values) if expected_latency_values else None
+
+    if failed_count:
+        reasons.append(f"存在 {failed_count} 个失败或中断任务")
+        actions.append({"type": "focus_failed", "label": "查看失败任务"})
+    if error_counts:
+        top_error, count = max(error_counts.items(), key=lambda item: item[1])
+        reasons.append(f"主要异常为 {top_error}，出现 {count} 次")
+    if success_rate is not None and success_rate < 0.95:
+        reasons.append(f"成功率偏低，当前 {success_rate * 100:.1f}%")
+        actions.append({"type": "focus_failed", "label": "定位失败原因"})
+    if rpm_ratio is not None and rpm_ratio < 0.9:
+        reasons.append(f"RPM 未达目标，当前达成 {rpm_ratio * 100:.0f}%")
+        actions.append({"type": "new_test", "label": "调整并发重测"})
+    if tpm_ratio is not None and tpm_ratio < 0.9:
+        reasons.append(f"TPM 未达目标，当前达成 {tpm_ratio * 100:.0f}%")
+        actions.append({"type": "new_test", "label": "调整配置重测"})
+    if p95 is not None and expected_latency and p95 > expected_latency * 1.25:
+        reasons.append(f"P95 延迟高于预期，当前 {p95:.2f}s")
+        actions.append({"type": "open_report", "label": "打开最新报告"})
+
+    if not reasons:
+        summary = "实时吞吐、成功率和延迟处于可接受范围。"
+        overall_status = "healthy"
+    else:
+        severe = failed_count > 0 or (success_rate is not None and success_rate < 0.9)
+        severe = severe or any(ratio is not None and ratio < 0.6 for ratio in [rpm_ratio, tpm_ratio])
+        overall_status = "critical" if severe else "warning"
+        summary = reasons[0] if active_tasks else f"最近任务需要关注：{reasons[0]}"
+
+    if not actions:
+        actions.append({"type": "open_report", "label": "查看最新报告"})
+
+    unique_actions: list[dict[str, str]] = []
+    seen_actions = set()
+    for action in actions:
+        key = action["type"]
+        if key in seen_actions:
+            continue
+        seen_actions.add(key)
+        unique_actions.append(action)
+
+    return {
+        "overall_status": overall_status,
+        "summary": summary,
+        "reasons": reasons[:5],
+        "actions": unique_actions[:3],
+    }
+
+
 def _task_out(
     task: TestTask,
     result: TestResult | None,
@@ -241,6 +357,7 @@ async def realtime_dashboard(
             "success_rate": item_success_rate,
             "latency_p95": item_p95,
         }
+        error_message = result.error_message if result else None
         if is_active:
             metric_sources.append(metric_item)
             target_sources.append(targets)
@@ -263,7 +380,8 @@ async def realtime_dashboard(
             "success_rate": item_success_rate,
             "latency_p95": item_p95,
             "expected_metrics": expected_metrics,
-            "error_message": result.error_message if result else None,
+            "error_message": error_message,
+            "issue_tags": _task_issue_tags(task.status, metric_item, targets, error_message),
         })
 
     sources = metric_sources or fallback_metric_sources[:12]
@@ -288,6 +406,7 @@ async def realtime_dashboard(
         for item in sources
         if item.get("latency_p95") is not None
     ]
+    failed_count = status_counts.get("failed", 0) + status_counts.get("interrupted", 0)
 
     return {
         "generated_at": datetime.utcnow(),
@@ -307,6 +426,19 @@ async def realtime_dashboard(
         "protocol_counts": protocol_counts,
         "model_counts": dict(sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
         "error_counts": dict(sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
+        "diagnostics": _dashboard_diagnostics(
+            total=total,
+            active_tasks=active_tasks,
+            rpm=rpm,
+            tpm=tpm,
+            expected_rpm=expected_rpm,
+            expected_tpm=expected_tpm,
+            expected_latency_values=expected_latency_values,
+            success_rates=success_rates,
+            p95_values=p95_values,
+            failed_count=failed_count,
+            error_counts=error_counts,
+        ),
         "recent_tasks": recent_tasks[:8],
     }
 

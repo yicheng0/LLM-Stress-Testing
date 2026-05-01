@@ -28,6 +28,36 @@
         :title="`刷新失败：${refreshError}，已保留上次数据`"
       />
 
+      <div class="diagnosis-summary" :class="diagnosisMeta.className">
+        <div class="diagnosis-status">
+          <el-icon><component :is="diagnosisMeta.icon" /></el-icon>
+        </div>
+        <div class="diagnosis-main">
+          <div class="diagnosis-kicker">{{ diagnosisMeta.label }}</div>
+          <strong>{{ diagnostics.summary }}</strong>
+          <div class="diagnosis-ratios">
+            <span>RPM {{ formatAchievement(rpmAchievement) }}</span>
+            <span>TPM {{ formatAchievement(tpmAchievement) }}</span>
+            <span>成功率 {{ percent(aggregate.successRate) }}</span>
+            <span>P95 {{ seconds(aggregate.p95) }}</span>
+          </div>
+          <div v-if="diagnostics.reasons.length" class="diagnosis-reasons">
+            <span v-for="reason in diagnostics.reasons" :key="reason">{{ reason }}</span>
+          </div>
+        </div>
+        <div class="diagnosis-actions">
+          <el-button
+            v-for="action in diagnostics.actions"
+            :key="`${action.type}-${action.label}`"
+            size="small"
+            :type="action.type === 'new_test' ? 'primary' : 'default'"
+            @click="handleDiagnosticAction(action.type)"
+          >
+            {{ action.label }}
+          </el-button>
+        </div>
+      </div>
+
       <div class="live-card-grid">
         <div v-for="card in metricCards" :key="card.label" class="live-card" :class="card.tone">
           <div class="live-card-icon">
@@ -74,7 +104,7 @@
           <div ref="protocolEl" class="live-chart" />
         </div>
 
-        <div class="activity-tile">
+        <div ref="activityTileEl" class="activity-tile">
           <div class="tile-header">
             <h3>活跃 / 最近任务</h3>
             <span>异常和运行中优先</span>
@@ -96,6 +126,18 @@
               <span class="activity-main">
                 <strong>{{ item.name }}</strong>
                 <span>{{ statusText(item.status) }} · {{ protocolText(item.api_protocol) }} · {{ item.model }}</span>
+                <span v-if="item.error_message" class="activity-error">{{ errorText(item.error_message) }}</span>
+                <span v-if="item.issue_tags?.length" class="issue-tags">
+                  <el-tag
+                    v-for="tag in item.issue_tags"
+                    :key="tag"
+                    size="small"
+                    :type="issueTagType(tag)"
+                    effect="plain"
+                  >
+                    {{ tag }}
+                  </el-tag>
+                </span>
               </span>
               <span class="activity-runtime">{{ runtimeText(item) }}</span>
               <span class="activity-metrics">
@@ -116,7 +158,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
-import { DataAnalysis, FullScreen, Histogram, Refresh, TrendCharts, VideoPause, VideoPlay } from '@element-plus/icons-vue'
+import {
+  CircleCheck,
+  DataAnalysis,
+  FullScreen,
+  Histogram,
+  Refresh,
+  TrendCharts,
+  VideoPause,
+  VideoPlay,
+  Warning
+} from '@element-plus/icons-vue'
 import { getRealtimeDashboard } from '../api/client'
 
 const router = useRouter()
@@ -137,6 +189,7 @@ const windowOptions = [
 const trendEl = ref()
 const statusEl = ref()
 const protocolEl = ref()
+const activityTileEl = ref()
 let timer
 let trendChart
 let statusChart
@@ -145,6 +198,7 @@ let protocolChart
 const activeStatuses = ['queued', 'running', 'stopping']
 const activeTasks = computed(() => items.value.filter((item) => activeStatuses.includes(item.status)))
 const recentItems = computed(() => [...items.value].sort(taskPriority).slice(0, 8))
+const latestReportTask = computed(() => recentItems.value.find((item) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(item.status)))
 const aggregate = computed(() => {
   const metrics = dashboard.value?.metrics || {}
   return {
@@ -177,6 +231,30 @@ const healthTone = computed(() => {
   if (refreshError.value || failedCount.value > 0 || numeric(aggregate.value.successRate, 1) < 0.95) return 'danger'
   if (minAchievement.value !== null && minAchievement.value < 0.6) return 'warning'
   return 'ok'
+})
+const diagnostics = computed(() => {
+  const fallback = {
+    overall_status: total.value ? 'healthy' : 'idle',
+    summary: total.value ? '实时数据暂无明显异常。' : '暂无测试数据，启动一次压测后可查看实时诊断。',
+    reasons: [],
+    actions: total.value ? [{ type: 'open_report', label: '查看最新报告' }] : [{ type: 'new_test', label: '新建测试' }]
+  }
+  const value = dashboard.value?.diagnostics || fallback
+  return {
+    overall_status: value.overall_status || fallback.overall_status,
+    summary: value.summary || fallback.summary,
+    reasons: Array.isArray(value.reasons) ? value.reasons : [],
+    actions: Array.isArray(value.actions) ? value.actions : fallback.actions
+  }
+})
+const diagnosisMeta = computed(() => {
+  const meta = {
+    healthy: { label: '诊断正常', className: 'healthy', icon: CircleCheck },
+    warning: { label: '需要关注', className: 'warning', icon: Warning },
+    critical: { label: '需要处理', className: 'critical', icon: Warning },
+    idle: { label: '等待数据', className: 'idle', icon: DataAnalysis }
+  }
+  return meta[diagnostics.value.overall_status] || meta.idle
 })
 
 const metricCards = computed(() => [
@@ -387,6 +465,18 @@ function goTask(item) {
   router.push(`/tests/${item.id}/run`)
 }
 
+function handleDiagnosticAction(type) {
+  if (type === 'new_test') {
+    router.push('/tests/new')
+    return
+  }
+  if (type === 'open_report' && latestReportTask.value) {
+    router.push(`/tests/${latestReportTask.value.id}/report`)
+    return
+  }
+  activityTileEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function toggleFullscreen() {
   const element = document.querySelector('.realtime-panel')
   if (!document.fullscreenElement && element?.requestFullscreen) {
@@ -432,6 +522,18 @@ function formatAchievement(value) {
 function targetText(current, target) {
   if (target === undefined || target === null || Number.isNaN(Number(target))) return '暂无目标快照'
   return `${number(current)} / ${number(target)} · ${formatAchievement(achievementRatio(current, target))}`
+}
+
+function issueTagType(tag) {
+  if (['异常结束', '有错误', '低成功率'].includes(tag)) return 'danger'
+  if (['延迟高', 'RPM低', 'TPM低'].includes(tag)) return 'warning'
+  if (tag === '运行中') return 'success'
+  return 'info'
+}
+
+function errorText(value) {
+  if (!value) return ''
+  return String(value).replace(/\s+/g, ' ').slice(0, 120)
 }
 
 function runtimeText(item) {
@@ -515,6 +617,117 @@ onBeforeUnmount(() => {
 
 .refresh-alert {
   margin-bottom: 14px;
+}
+
+.diagnosis-summary {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #dfe7f2;
+  border-left-width: 5px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.diagnosis-summary.healthy {
+  border-left-color: #16a34a;
+}
+
+.diagnosis-summary.warning {
+  border-left-color: #f59e0b;
+}
+
+.diagnosis-summary.critical {
+  border-left-color: #dc2626;
+}
+
+.diagnosis-summary.idle {
+  border-left-color: #64748b;
+}
+
+.diagnosis-status {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 24px;
+}
+
+.diagnosis-summary.healthy .diagnosis-status {
+  background: #ecfdf3;
+  color: #16a34a;
+}
+
+.diagnosis-summary.warning .diagnosis-status {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.diagnosis-summary.critical .diagnosis-status {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.diagnosis-main {
+  min-width: 0;
+}
+
+.diagnosis-kicker {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.diagnosis-main strong {
+  display: block;
+  margin-top: 4px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.diagnosis-ratios,
+.diagnosis-reasons,
+.diagnosis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnosis-ratios {
+  margin-top: 10px;
+}
+
+.diagnosis-ratios span {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.diagnosis-reasons {
+  margin-top: 8px;
+}
+
+.diagnosis-reasons span {
+  max-width: 100%;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnosis-actions {
+  justify-content: flex-end;
 }
 
 .live-card-grid {
@@ -734,18 +947,29 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-.activity-main strong,
-.activity-main span {
+.activity-main > strong,
+.activity-main > span:not(.issue-tags) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.activity-main span,
+.activity-main > span:not(.issue-tags),
 .activity-runtime,
 .activity-metrics em {
   color: #64748b;
   font-size: 12px;
+}
+
+.activity-main .activity-error {
+  color: #b91c1c;
+}
+
+.issue-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .activity-runtime {
@@ -829,6 +1053,7 @@ onBeforeUnmount(() => {
 
 .realtime-panel:fullscreen .section-title,
 .realtime-panel:fullscreen .tile-header h3,
+.realtime-panel:fullscreen .diagnosis-main strong,
 .realtime-panel:fullscreen .diagnostic-card strong,
 .realtime-panel:fullscreen .activity-metrics strong,
 .realtime-panel:fullscreen .empty-state strong {
@@ -837,13 +1062,20 @@ onBeforeUnmount(() => {
 
 .realtime-panel:fullscreen .panel-subtitle,
 .realtime-panel:fullscreen .tile-header span,
-.realtime-panel:fullscreen .activity-main span,
+.realtime-panel:fullscreen .activity-main > span:not(.issue-tags),
 .realtime-panel:fullscreen .activity-runtime,
 .realtime-panel:fullscreen .activity-metrics em,
+.realtime-panel:fullscreen .diagnosis-kicker,
+.realtime-panel:fullscreen .diagnosis-reasons span,
 .realtime-panel:fullscreen .diagnostic-label,
 .realtime-panel:fullscreen .diagnostic-card span,
 .realtime-panel:fullscreen .empty-state {
   color: #94a3b8;
+}
+
+.realtime-panel:fullscreen .diagnosis-ratios span {
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
 }
 
 .realtime-panel:fullscreen .section-body {
@@ -851,6 +1083,7 @@ onBeforeUnmount(() => {
 }
 
 .realtime-panel:fullscreen .chart-tile,
+.realtime-panel:fullscreen .diagnosis-summary,
 .realtime-panel:fullscreen .diagnostic-card,
 .realtime-panel:fullscreen .activity-tile {
   border-color: rgba(148, 163, 184, 0.22);
@@ -886,6 +1119,14 @@ onBeforeUnmount(() => {
   .diagnostic-grid,
   .live-layout {
     grid-template-columns: 1fr;
+  }
+
+  .diagnosis-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnosis-actions {
+    justify-content: flex-start;
   }
 
   .live-card {

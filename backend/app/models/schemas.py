@@ -105,6 +105,36 @@ class CleanupOut(BaseModel):
     retention_hours: int
 
 
+class VersionInfoOut(BaseModel):
+    available: bool = True
+    update_enabled: bool = False
+    current_version: str
+    current_ref: str | None = None
+    latest_ref: str | None = None
+    branch: str | None = None
+    remote_url: str | None = None
+    ahead_count: int | None = None
+    behind_count: int | None = None
+    dirty: bool | None = None
+    update_available: bool = False
+    message: str | None = None
+    checked_at: datetime | None = None
+
+
+class VersionUpdateRequest(BaseModel):
+    force: bool = False
+
+
+class VersionUpdateOut(BaseModel):
+    success: bool
+    message: str
+    current_ref: str | None = None
+    latest_ref: str | None = None
+    restart_required: bool = True
+    stdout: str | None = None
+    stderr: str | None = None
+
+
 class CurlConvertRequest(BaseModel):
     curl: str = Field(..., min_length=1)
     base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)

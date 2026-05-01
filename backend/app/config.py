@@ -11,6 +11,9 @@ class Settings:
     max_concurrency_per_test: int = int(os.getenv("MAX_CONCURRENCY_PER_TEST", "500"))
     result_retention_hours: int = int(os.getenv("RESULT_RETENTION_HOURS", "24"))
     cleanup_on_startup: bool = os.getenv("CLEANUP_ON_STARTUP", "true").lower() in {"1", "true", "yes", "on"}
+    self_update_enabled: bool = os.getenv("SELF_UPDATE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+    self_update_command: str = os.getenv("SELF_UPDATE_COMMAND", "").strip()
+    self_update_timeout_sec: int = int(os.getenv("SELF_UPDATE_TIMEOUT_SEC", "900"))
 
 
 settings = Settings()

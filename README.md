@@ -48,6 +48,11 @@ The frontend can use:
 - `VITE_API_BASE_URL`: optional API base URL for non-proxy deployments
 - `VITE_WS_BASE_URL`: optional websocket base URL for non-proxy deployments
 
+The backend can use:
+
+- `SELF_UPDATE_ENABLED`: enable the version check/update panel action
+- `SELF_UPDATE_COMMAND`: optional custom update command when using the panel button
+
 API keys are submitted per test run. The backend removes `api_key` before persisting task configuration to SQLite and reports; do not put real keys in `.env.example`, docs, logs, or committed result files.
 
 ## State And Retention
@@ -76,6 +81,16 @@ git add frontend\src\components\ConfigForm.vue backend\app\models\schemas.py REA
 ```
 
 The script bumps the patch version, syncs the frontend package files and backend API version, then creates the commit. Do not stage logs, `results/`, `frontend/dist/`, or `__pycache__/` files.
+
+## Deployment Guide
+
+See [docs/部署教程.md](docs/部署教程.md) for a step-by-step deployment guide, including first-time setup, Nginx reverse proxy, persistence, upgrades, and troubleshooting.
+
+Docker Compose defaults to non-common host ports:
+
+- Web console: `18080`
+- Backend API: `18081`
+
 ## CLI Example
 
 ```powershell
