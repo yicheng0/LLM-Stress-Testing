@@ -15,7 +15,7 @@ class TestCreate(BaseModel):
     anthropic_version: str = Field(default="2023-06-01", min_length=1)
     base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
     api_key: str = Field(..., min_length=1)
-    model: str = Field(default="glm-5.1", min_length=1)
+    model: str = Field(default="gpt-5.5", min_length=1)
     endpoint: str = Field(default="/chat/completions")
     concurrency: int = Field(default=10, ge=1, le=1000)
     duration_sec: int = Field(default=60, ge=1, le=86400)

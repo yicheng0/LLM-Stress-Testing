@@ -23,6 +23,30 @@
       </div>
     </div>
 
+    <div class="section beginner-section">
+      <div class="section-header">
+        <h2 class="section-title">新手只看这 5 个参数</h2>
+        <el-tag type="success" effect="plain">新手模式</el-tag>
+      </div>
+      <div class="section-body">
+        <div class="beginner-grid">
+          <div v-for="item in beginnerItems" :key="item.name" class="beginner-card">
+            <span>{{ item.name }}</span>
+            <strong>{{ item.meaning }}</strong>
+            <em>{{ item.tip }}</em>
+          </div>
+        </div>
+        <el-alert
+          class="beginner-note"
+          title="输入 Token 不需要手写测试内容"
+          description="页面里的单请求输入 Token 目标只是告诉系统生成多长的合成测试 prompt；真正发送的文本由压测工具自动生成，报告会展示实际统计到的 token。"
+          type="info"
+          show-icon
+          :closable="false"
+        />
+      </div>
+    </div>
+
     <div v-for="group in groups" :key="group.title" class="section">
       <div class="section-header">
         <h2 class="section-title">{{ group.title }}</h2>
@@ -82,6 +106,34 @@ import { useRouter } from 'vue-router'
 import { ArrowRight, DataAnalysis } from '@element-plus/icons-vue'
 
 const router = useRouter()
+
+const beginnerItems = [
+  {
+    name: '目标 RPM',
+    meaning: '你希望每分钟完成多少个成功请求。',
+    tip: '新手模式会按这个目标反推并发。'
+  },
+  {
+    name: '单请求输入 Token 目标',
+    meaning: '每个请求里测试 prompt 的目标长度。',
+    tip: '系统自动生成接近该长度的 prompt，不需要人工写内容。'
+  },
+  {
+    name: '最大输出 Token',
+    meaning: '每个请求最多允许模型生成多少 token。',
+    tip: '输出越长，耗时和 Token 消耗越高。'
+  },
+  {
+    name: '预计单请求耗时',
+    meaning: '用来估算 RPM 和并发的平均耗时假设。',
+    tip: '真实耗时会在运行页和报告里展示。'
+  },
+  {
+    name: '测试时长',
+    meaning: '本次单点测试持续多久。',
+    tip: '时间越长越稳定，但消耗也越高。'
+  }
+]
 
 const groups = [
   {
@@ -144,11 +196,11 @@ const groups = [
         note: '时长越长，报告越稳定，但成本也越高。'
       },
       {
-        name: '输入 Token 数',
+        name: '单请求输入 Token 目标',
         field: 'input_tokens',
-        meaning: '生成合成 prompt 的目标 token 长度。',
+        meaning: '系统生成合成测试 prompt 的目标 token 长度。',
         recommendation: '按真实业务输入规模选择，例如 1k、10k、100k。',
-        note: '实际 token 数会受 tokenizer 估算影响，报告会展示实际值。'
+        note: '不需要手写 prompt；实际 token 数会受 tokenizer 估算影响，报告会展示实际值。'
       },
       {
         name: '最大输出 Token 数',
@@ -280,6 +332,42 @@ const metrics = [
   gap: 12px;
 }
 
+.beginner-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.beginner-card {
+  min-height: 132px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.beginner-card span,
+.beginner-card em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.beginner-card strong {
+  display: block;
+  margin: 8px 0 6px;
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.beginner-note {
+  margin-top: 14px;
+}
+
 .intro-grid > div,
 .metric-doc {
   padding: 14px;
@@ -348,6 +436,7 @@ code {
 
 @media (max-width: 1180px) {
   .intro-grid,
+  .beginner-grid,
   .metric-doc-grid {
     grid-template-columns: 1fr;
   }

@@ -34,6 +34,8 @@
           <el-descriptions-item label="并发">{{ config.concurrency || '-' }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ effectiveDuration }} 秒</el-descriptions-item>
           <el-descriptions-item label="流式">{{ config.enable_stream ? '开启' : '关闭' }}</el-descriptions-item>
+          <el-descriptions-item label="输入 Token 目标">{{ isMatrix ? '-' : number(config.input_tokens) }}</el-descriptions-item>
+          <el-descriptions-item label="最大输出 Token">{{ number(config.max_output_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="测试点">{{ isMatrix ? summary.test_points : '-' }}</el-descriptions-item>
           <el-descriptions-item label="Base URL" :span="2">{{ config.base_url || '-' }}</el-descriptions-item>
           <el-descriptions-item label="Endpoint" :span="2">{{ config.endpoint || '-' }}</el-descriptions-item>
@@ -187,7 +189,7 @@
         </div>
         <div class="section-body">
           <el-table :data="matrixPoints" border>
-            <el-table-column prop="input_tokens" label="输入 Token" />
+            <el-table-column prop="input_tokens" label="输入 Token 目标" />
             <el-table-column prop="concurrency" label="并发" />
             <el-table-column prop="rpm" label="RPM" />
             <el-table-column prop="total_tps" label="TPS" />
@@ -424,8 +426,8 @@ const capacityRecommendation = computed(() => {
       label: stable ? '可作为基线' : '需降压复测',
       title: stable ? '推荐使用最佳稳定点作为容量基线' : '最高吞吐点稳定性不足',
       description: stable
-        ? `建议以 ${number(point.input_tokens)} 输入 Token、${number(point.concurrency)} 并发作为当前模型容量基线，约 ${number(point.rpm)} RPM / ${number(point.total_tpm)} TPM。`
-        : `当前矩阵没有达到 99% 成功率且 P95 可参考的稳定点，建议降低并发或缩短输入 Token 后复测。`,
+        ? `建议以 ${number(point.input_tokens)} 输入 Token 目标、${number(point.concurrency)} 并发作为当前模型容量基线，约 ${number(point.rpm)} RPM / ${number(point.total_tpm)} TPM。`
+        : `当前矩阵没有达到 99% 成功率且 P95 可参考的稳定点，建议降低并发或缩短输入 Token 目标后复测。`,
       type: stable ? 'success' : 'warning'
     }
   }
@@ -461,7 +463,7 @@ const capacityCards = computed(() => {
   if (isMatrix.value) {
     const point = bestStableMatrixPoint.value
     return [
-      { label: '推荐并发', value: number(point?.concurrency), description: `输入 Token ${number(point?.input_tokens)}`, type: capacityRecommendation.value.type },
+      { label: '推荐并发', value: number(point?.concurrency), description: `输入 Token 目标 ${number(point?.input_tokens)}`, type: capacityRecommendation.value.type },
       { label: '推荐 RPM', value: number(point?.rpm), description: '优先选择稳定点，不只看峰值', type: 'ok' },
       { label: '推荐 TPM', value: number(point?.total_tpm), description: `成功率 ${percent(point?.success_rate)}`, type: 'ok' },
       { label: '尾延迟 P95', value: seconds(point?.latency_p95), description: '作为容量口径的延迟参考', type: Number(point?.latency_p95 || 0) >= 10 ? 'warning' : 'ok' }
@@ -545,16 +547,16 @@ const customerSummaryLines = computed(() => {
   if (isMatrix.value) {
     const point = bestStableMatrixPoint.value
     return [
-      `测试目的：评估 ${config.value.model || '-'} 在不同输入 Token 和并发组合下的容量边界。`,
+      `测试目的：评估 ${config.value.model || '-'} 在不同输入 Token 目标和并发组合下的容量边界。`,
       `测试配置：矩阵测试共 ${number(summary.value.test_points)} 个测试点，流式模式${config.value.enable_stream ? '开启' : '关闭'}。`,
-      `核心结果：推荐稳定点为 ${number(point?.input_tokens)} 输入 Token / ${number(point?.concurrency)} 并发，约 ${number(point?.rpm)} RPM / ${number(point?.total_tpm)} TPM。`,
+      `核心结果：推荐稳定点为 ${number(point?.input_tokens)} 输入 Token 目标 / ${number(point?.concurrency)} 并发，约 ${number(point?.rpm)} RPM / ${number(point?.total_tpm)} TPM。`,
       `瓶颈判断：${capacityRecommendation.value.title}。`,
       `建议动作：以稳定点作为基线，继续围绕更高并发或更长上下文做小步复测。`,
       `风险提示：结果仅代表本次网络、账号配额和模型版本条件下的观测值。`
     ]
   }
   return [
-    `测试目的：评估 ${config.value.model || '-'} 在 ${number(config.value.concurrency)} 并发、${number(config.value.input_tokens)} 输入 Token 下的吞吐和延迟表现。`,
+    `测试目的：评估 ${config.value.model || '-'} 在 ${number(config.value.concurrency)} 并发、${number(config.value.input_tokens)} 输入 Token 目标下的吞吐和延迟表现。`,
     `测试配置：持续 ${number(effectiveDuration.value)} 秒，流式模式${config.value.enable_stream ? '开启' : '关闭'}，最大输出 ${number(config.value.max_output_tokens)} Token。`,
     `核心结果：成功率 ${percent(results.value.success_rate)}，实测 ${number(results.value.rpm)} RPM / ${number(results.value.total_tpm)} TPM，P95 延迟 ${seconds(results.value.latency_sec_p95)}。`,
     `瓶颈判断：${bottleneckText.value}；${capacityRecommendation.value.title}。`,
@@ -596,7 +598,7 @@ const expectationCards = computed(() => [
   {
     label: '预计消耗',
     value: compactNumber(expectedMetrics.value?.expected_total_tokens),
-    description: `${number(expectedMetrics.value?.expected_requests)} 请求 / ${number(expectedMetrics.value?.expected_latency_sec)}s 假设耗时`,
+    description: `${number(expectedMetrics.value?.expected_requests)} 请求 / 输入 ${compactNumber(expectedMetrics.value?.expected_input_token_total)} / 输出上限 ${compactNumber(expectedMetrics.value?.expected_output_token_limit)}`,
     type: 'ok'
   }
 ])
@@ -705,7 +707,7 @@ const matrixMetricItems = computed(() => {
   const bestRpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.rpm || 0)))
   const minP95 = Math.min(...matrixPoints.value.map(item => Number(item.latency_p95 || Infinity)))
   return [
-    { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token x 并发', color: '#2563eb' },
+    { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token 目标 x 并发', color: '#2563eb' },
     { label: '最高 TPM', value: number(bestTpm), sub: '矩阵峰值', color: '#f97316' },
     { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值', color: '#16a34a' },
     { label: '最低 P95', value: minP95 === Infinity ? '-' : seconds(minP95), sub: '延迟最优点', color: '#334155' }
@@ -773,7 +775,7 @@ const conclusionAdvice = computed(() => {
     if (unstable.length) {
       items.push({
         title: '矩阵中存在成功率偏低的测试点',
-        description: '建议重点对比这些测试点的并发、输入 Token 和错误分布，确认是限流还是模型容量不足。',
+        description: '建议重点对比这些测试点的并发、输入 Token 目标和错误分布，确认是限流还是模型容量不足。',
         type: 'warning'
       })
     }
@@ -939,7 +941,7 @@ const matrixHeatmapOption = computed(() => {
     },
     yAxis: {
       type: 'category',
-      name: '输入 Token',
+      name: '输入 Token 目标',
       nameGap: 54,
       data: inputs.map((item) => compactNumber(item)),
       splitArea: { show: true }

@@ -9,7 +9,7 @@
         <div class="mode-grid">
           <div class="mode-card" :class="{ active: !isExpertMode }">
             <strong>新手模式</strong>
-            <span>围绕目标 RPM/TPM 反推配置，只显示启动测试必需参数。</span>
+            <span>围绕目标 RPM 反推配置，只显示启动测试必需参数。</span>
           </div>
           <div class="mode-card" :class="{ active: isExpertMode }">
             <strong>专家模式</strong>
@@ -118,7 +118,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div v-if="isExpertMode" class="section">
       <div class="section-header">
         <h2 class="section-title">负载配置</h2>
       </div>
@@ -156,7 +156,7 @@
         <el-form-item label="测试时长（秒）" prop="duration_sec">
           <el-input-number v-model="form.duration_sec" :min="1" :max="86400" controls-position="right" />
         </el-form-item>
-        <el-form-item label="输入 Token 数" prop="input_tokens">
+        <el-form-item label="单请求输入 Token 目标" prop="input_tokens">
           <div class="inline-field">
             <el-input-number v-model="form.input_tokens" :min="1" :step="1000" controls-position="right" />
             <el-segmented v-model="tokenPreset" :options="tokenOptions" @change="applyTokenPreset" />
@@ -215,6 +215,24 @@
               <strong>{{ estimatedTotalTokensText }}</strong>
               <em>{{ form.matrix_mode ? '按矩阵区间粗估' : '请求数 x 单请求 Token' }}</em>
             </div>
+            <div>
+              <span>预计输入 Token</span>
+              <strong>{{ estimatedInputTokensText }}</strong>
+              <em>{{ form.matrix_mode ? '矩阵所有测试点' : '系统自动生成测试 prompt' }}</em>
+            </div>
+            <div>
+              <span>预计输出 Token 上限</span>
+              <strong>{{ estimatedOutputTokensText }}</strong>
+              <em>按最大输出 Token 粗估</em>
+            </div>
+          </div>
+          <div class="consumption-panel" :class="consumptionRisk.type">
+            <div>
+              <span>启动前消耗风险</span>
+              <strong>{{ consumptionRisk.label }}</strong>
+              <em>{{ consumptionRisk.description }}</em>
+            </div>
+            <el-tag :type="consumptionRisk.tagType" effect="plain">{{ consumptionRisk.level }}</el-tag>
           </div>
           <el-alert
             class="estimate-note"
@@ -228,7 +246,7 @@
             <div class="target-head">
               <div>
                 <h3>按预期反推测试参数</h3>
-                <p>{{ isExpertMode ? '选择目标模式和 Token 规模，点击应用后会同步修改上方真实测试参数。' : '填写目标 RPM、Token 规模和预计耗时，系统会反推并发与预期 TPM。' }}</p>
+                <p>{{ isExpertMode ? '选择目标模式和 Token 规模，点击应用后会同步修改上方真实测试参数。' : '填写目标 RPM、单请求输入 Token 目标和预计耗时，系统会反推并发与预期 TPM。' }}</p>
               </div>
               <el-tag :type="form.matrix_mode ? 'warning' : 'success'" effect="plain">
                 {{ form.matrix_mode ? '矩阵模式不可用' : '单点测试可同步' }}
@@ -286,7 +304,7 @@
                   :disabled="form.matrix_mode"
                 />
               </el-form-item>
-              <el-form-item label="输入 Token">
+              <el-form-item label="单请求输入 Token 目标">
                 <el-input-number
                   v-model="targetEstimate.inputTokens"
                   :min="1"
@@ -515,7 +533,7 @@
               <h4>负载配置</h4>
               <div><span>模式</span><strong>{{ form.matrix_mode ? '矩阵测试' : '单点测试' }}</strong></div>
               <div><span>并发</span><strong>{{ form.matrix_mode ? matrixConcurrencyValues.join(', ') : form.concurrency }}</strong></div>
-              <div><span>输入 Token</span><strong>{{ form.matrix_mode ? matrixInputValues.map(number).join(', ') : number(form.input_tokens) }}</strong></div>
+              <div><span>输入 Token 目标</span><strong>{{ form.matrix_mode ? matrixInputValues.map(number).join(', ') : number(form.input_tokens) }}</strong></div>
               <div><span>最大输出</span><strong>{{ number(form.max_output_tokens) }} Token</strong></div>
               <div><span>单点时长</span><strong>{{ form.matrix_mode ? `${form.matrix_duration_sec}s` : `${form.duration_sec}s` }}</strong></div>
               <div><span>预热请求</span><strong>{{ number(form.warmup_requests) }}</strong></div>
@@ -529,6 +547,9 @@
               <div><span>预期 TPM</span><strong>{{ estimatedTpmText }}</strong></div>
               <div><span>预期 TPS</span><strong>{{ estimatedTpsText }}</strong></div>
               <div><span>单请求 Token</span><strong>{{ number(estimatedTokensPerRequest) }}</strong></div>
+              <div><span>预计输入</span><strong>{{ estimatedInputTokensText }}</strong></div>
+              <div><span>预计输出上限</span><strong>{{ estimatedOutputTokensText }}</strong></div>
+              <div><span>消耗风险</span><strong>{{ consumptionRisk.label }}</strong></div>
             </div>
           </div>
         </el-popover>
@@ -565,7 +586,7 @@ const defaults = {
   anthropic_version: '2023-06-01',
   base_url: 'https://api.wenwen-ai.com',
   api_key: '',
-  model: 'glm-5.1',
+  model: 'gpt-5.5',
   endpoint: '/chat/completions',
   concurrency: 10,
   duration_sec: 60,
@@ -786,12 +807,12 @@ const protocolDefaults = {
   anthropic: {
     stream_endpoint: '/messages',
     non_stream_endpoint: '/messages',
-    model: 'claude-sonnet-4-20250514'
+    model: 'claude-sonnet-4-6-20260218'
   },
   gemini: {
     stream_endpoint: '/models/{model}:streamGenerateContent?alt=sse',
     non_stream_endpoint: '/models/{model}:generateContent',
-    model: 'gemini-2.5-pro'
+    model: 'gemini-3.1-pro-preview'
   }
 }
 const protocolOptions = [
@@ -890,6 +911,8 @@ const estimatedSingleRequestCount = computed(() => (
   estimatedSingleRpm.value * Number(form.duration_sec || 0) / 60
 ))
 const estimatedSingleTotalTokens = computed(() => estimatedSingleRequestCount.value * estimatedTokensPerRequest.value)
+const estimatedSingleInputTokens = computed(() => estimatedSingleRequestCount.value * Number(form.input_tokens || 0))
+const estimatedSingleOutputTokenLimit = computed(() => estimatedSingleRequestCount.value * Number(form.max_output_tokens || 0))
 const estimatedMatrixRpmRange = computed(() => {
   if (!matrixConcurrencyValues.value.length) return [0, 0]
   const values = matrixConcurrencyValues.value.map((item) => item / effectiveAssumedLatencySec.value * 60)
@@ -917,6 +940,19 @@ const estimatedMatrixTotalTokens = computed(() => {
     }, 0)
   ), 0)
 })
+const estimatedMatrixInputTokens = computed(() => {
+  if (!matrixInputValues.value.length || !matrixConcurrencyValues.value.length) return 0
+  return matrixInputValues.value.reduce((sum, inputTokens) => (
+    sum + matrixConcurrencyValues.value.reduce((innerSum, concurrency) => {
+      const rpm = concurrency / effectiveAssumedLatencySec.value * 60
+      const requests = rpm * Number(form.matrix_duration_sec || 0) / 60
+      return innerSum + requests * inputTokens
+    }, 0)
+  ), 0)
+})
+const estimatedMatrixOutputTokenLimit = computed(() => (
+  estimatedMatrixRequestCount.value * Number(form.max_output_tokens || 0)
+))
 const estimatedMatrixTokenRange = computed(() => {
   if (!matrixInputValues.value.length) return [0, 0]
   const tokenValues = matrixInputValues.value.map((item) => item + Number(form.max_output_tokens || 0))
@@ -944,6 +980,52 @@ const estimatedRequestCountText = computed(() => (
 const estimatedTotalTokensText = computed(() => (
   compactNumber(form.matrix_mode ? estimatedMatrixTotalTokens.value : estimatedSingleTotalTokens.value)
 ))
+const estimatedInputTokens = computed(() => (
+  form.matrix_mode ? estimatedMatrixInputTokens.value : estimatedSingleInputTokens.value
+))
+const estimatedOutputTokenLimit = computed(() => (
+  form.matrix_mode ? estimatedMatrixOutputTokenLimit.value : estimatedSingleOutputTokenLimit.value
+))
+const estimatedInputTokensText = computed(() => compactNumber(estimatedInputTokens.value))
+const estimatedOutputTokensText = computed(() => compactNumber(estimatedOutputTokenLimit.value))
+const consumptionRisk = computed(() => {
+  const totalTokens = Number(form.matrix_mode ? estimatedMatrixTotalTokens.value : estimatedSingleTotalTokens.value)
+  const concurrency = Number(form.matrix_mode ? Math.max(0, ...matrixConcurrencyValues.value) : form.concurrency || 0)
+  if (totalTokens >= 100000000 || concurrency >= 500) {
+    return {
+      level: '极高消耗',
+      label: '建议先降压验证',
+      description: '预计消耗或并发很高，启动前请确认配额、预算和目标 API 限流。',
+      type: 'danger',
+      tagType: 'danger'
+    }
+  }
+  if (totalTokens >= 10000000 || concurrency >= 200) {
+    return {
+      level: '高消耗',
+      label: '需要确认配额',
+      description: '适合正式压测，建议先完成小流量验证再启动。',
+      type: 'warning',
+      tagType: 'warning'
+    }
+  }
+  if (totalTokens >= 1000000 || concurrency >= 50) {
+    return {
+      level: '注意消耗',
+      label: '适合小流量观察',
+      description: '预计消耗可控，但仍建议关注实时成功率和延迟。',
+      type: 'info',
+      tagType: 'info'
+    }
+  }
+  return {
+    level: '低风险',
+    label: '适合快速验证',
+    description: '预计 Token 和并发较低，适合先验证连通性和报告链路。',
+    type: 'ok',
+    tagType: 'success'
+  }
+})
 const targetRpm = computed(() => {
   if (targetEstimate.mode === 'tpm') {
     const tokens = targetTokensPerRequest.value || 1
@@ -1041,6 +1123,9 @@ const expectedMetrics = computed(() => {
     expected_latency_sec: Number(assumedLatencySec.value || 10),
     expected_requests: requests,
     expected_total_tokens: tokens,
+    expected_input_token_total: estimatedInputTokens.value,
+    expected_output_token_limit: estimatedOutputTokenLimit.value,
+    expected_consumption_risk: consumptionRisk.value.level,
     expected_tokens_per_request: form.matrix_mode ? null : estimatedTokensPerRequest.value,
     expected_input_tokens: form.matrix_mode ? null : Number(form.input_tokens || 0),
     expected_output_tokens: form.matrix_mode ? null : Number(form.max_output_tokens || 0),
@@ -1613,6 +1698,49 @@ function reset() {
 
 .estimate-note {
   margin-top: 2px;
+}
+
+.consumption-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.consumption-panel.warning {
+  border-color: #fed7aa;
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
+.consumption-panel.danger {
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.consumption-panel > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.consumption-panel span,
+.consumption-panel em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.consumption-panel strong {
+  color: #1e293b;
+  font-size: 15px;
 }
 
 .target-estimator {
@@ -2190,6 +2318,10 @@ function reset() {
   }
 
   .target-head {
+    flex-direction: column;
+  }
+
+  .consumption-panel {
     flex-direction: column;
   }
 

@@ -43,7 +43,7 @@
             <el-descriptions-item label="模型">{{ task?.model || '-' }}</el-descriptions-item>
             <el-descriptions-item label="并发">{{ task?.concurrency || '-' }}</el-descriptions-item>
             <el-descriptions-item label="时长">{{ task?.duration_sec || '-' }} 秒</el-descriptions-item>
-            <el-descriptions-item label="输入 Token">{{ task?.input_tokens || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="输入 Token 目标">{{ task?.input_tokens || '-' }}</el-descriptions-item>
             <el-descriptions-item label="最大输出">{{ task?.max_output_tokens || '-' }}</el-descriptions-item>
             <el-descriptions-item label="流式">{{ task?.enable_stream ? '开启' : '关闭' }}</el-descriptions-item>
             <el-descriptions-item label="Endpoint">{{ task?.endpoint || '-' }}</el-descriptions-item>
@@ -161,7 +161,7 @@ const achievementItems = computed(() => [
   {
     label: '预计总 Token',
     value: compactNumber(expectedMetrics.value?.expected_total_tokens),
-    sub: `${formatNumber(expectedMetrics.value?.expected_requests)} 请求`,
+    sub: `${formatNumber(expectedMetrics.value?.expected_requests)} 请求 / 输入 ${compactNumber(expectedMetrics.value?.expected_input_token_total)}`,
     color: '#0f766e'
   }
 ])

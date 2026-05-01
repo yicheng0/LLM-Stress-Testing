@@ -163,7 +163,7 @@ def test_model_case(base_url, api_key, model):
 def main():
     BASE_URL = ""
     API_KEY  = ""
-    MODEL    = "glm-5.1"
+    MODEL    = "gpt-5.5"
 
     parser = argparse.ArgumentParser(description="GLM API feature validation tests")
     parser.add_argument("--base-url", default=BASE_URL)

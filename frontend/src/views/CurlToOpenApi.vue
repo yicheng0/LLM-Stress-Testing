@@ -178,7 +178,7 @@ const templates = [
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer sk-official-demo' \\
   -d '{
-    "model": "glm-5.1",
+    "model": "gpt-5.5",
     "messages": [
       {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Hello"}
@@ -197,7 +197,7 @@ const templates = [
   -H 'x-api-key: sk-ant-official-demo' \\
   -H 'anthropic-version: 2023-06-01' \\
   -d '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-6-20260218",
     "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "Hello"}
@@ -209,7 +209,7 @@ const templates = [
     key: 'gemini',
     label: 'Gemini',
     endpoint: 'generateContent',
-    curl: `curl https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent \\
+    curl: `curl https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent \\
   -H 'Content-Type: application/json' \\
   -H 'x-goog-api-key: official-demo-key' \\
   -d '{

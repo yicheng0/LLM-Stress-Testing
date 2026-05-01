@@ -93,7 +93,7 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
         default_base_url="https://api.example.com/v1",
         stream_endpoint="/chat/completions",
         non_stream_endpoint="/chat/completions",
-        default_model="glm-5.1",
+        default_model="gpt-5.5",
     ),
     "anthropic": ProtocolSpec(
         name="anthropic",
@@ -101,7 +101,7 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
         default_base_url="https://api.anthropic.com/v1",
         stream_endpoint="/messages",
         non_stream_endpoint="/messages",
-        default_model="claude-sonnet-4-20250514",
+        default_model="claude-sonnet-4-6-20260218",
     ),
     "gemini": ProtocolSpec(
         name="gemini",
@@ -109,7 +109,7 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
         default_base_url="https://generativelanguage.googleapis.com/v1beta",
         stream_endpoint="/models/{model}:streamGenerateContent?alt=sse",
         non_stream_endpoint="/models/{model}:generateContent",
-        default_model="gemini-2.5-pro",
+        default_model="gemini-3.1-pro-preview",
     ),
 }
 
@@ -1726,7 +1726,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anthropic-version", default="2023-06-01", help="Anthropic API 版本请求头")
     parser.add_argument("--base-url", default="https://api.wenwen-ai.com", help="例如 https://api.wenwen-ai.com")
     parser.add_argument("--api-key", default=os.getenv("API_KEY") or os.getenv("LLM_API_KEY"), help="API Key，默认读取 API_KEY 或 LLM_API_KEY 环境变量")
-    parser.add_argument("--model", default="glm-5.1", help="模型名")
+    parser.add_argument("--model", default="gpt-5.5", help="模型名")
     parser.add_argument("--endpoint", default="/chat/completions", help="/chat/completions 或 /responses")
     parser.add_argument("--concurrency", type=int, default=500)
     parser.add_argument("--duration-sec", type=int, default=300)
