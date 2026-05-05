@@ -810,7 +810,7 @@ const protocolDefaults = {
     model: 'claude-sonnet-4-6-20260218'
   },
   gemini: {
-    stream_endpoint: '/v1beta/models/{model-name}:streamGenerateContent',
+    stream_endpoint: '/v1beta/models/{model-name}:streamGenerateContent?alt=sse',
     non_stream_endpoint: '/v1beta/models/{model-name}:generateContent',
     model: 'gemini-3.1-pro-preview'
   }

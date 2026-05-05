@@ -109,7 +109,7 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
         name="gemini",
         label="Gemini API",
         default_base_url="https://api.wenwen-ai.com",
-        stream_endpoint="/v1beta/models/{model-name}:streamGenerateContent",
+        stream_endpoint="/v1beta/models/{model-name}:streamGenerateContent?alt=sse",
         non_stream_endpoint="/v1beta/models/{model-name}:generateContent",
         default_model="gemini-3.1-pro-preview",
     ),

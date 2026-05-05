@@ -41,6 +41,7 @@ def _endpoint(payload: dict[str, Any]) -> str:
         if endpoint in LEGACY_DEFAULT_ENDPOINTS:
             endpoint = default_endpoint(protocol)
         endpoint = str(endpoint).replace(":streamGenerateContent", ":generateContent")
+        endpoint = endpoint.split("?", 1)[0]
     model = payload.get("model") or "gemini-pro"
     return replace_model_placeholders(normalize_endpoint(endpoint, protocol), model)
 
