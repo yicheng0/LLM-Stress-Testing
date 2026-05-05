@@ -7,6 +7,15 @@
       @stop="confirmStop"
       @report="goReport"
     />
+    <el-alert
+      v-if="hasAuthFailure"
+      class="run-alert"
+      title="认证失败 / API Key 无效"
+      description="当前任务检测到 401/403 响应，请检查 API Key、模型权限和接入域名后重新测试。"
+      type="error"
+      show-icon
+      :closable="false"
+    />
 
     <MetricCards :items="metricItems" />
     <div v-if="hasExpectedMetrics" class="section">
@@ -99,6 +108,19 @@ const progressWithDuration = computed(() => ({
   final_summary: finalSummary.value,
   final_summary_loading: finalSummaryLoading.value
 }))
+const finalErrorCounts = computed(() => {
+  const summary = finalSummary.value || task.value?.summary || {}
+  if (!summary.matrix) return summary.results?.error_counts || {}
+  const merged = {}
+  const points = summary.results_matrix || []
+  points.forEach((point) => {
+    Object.entries(point.results?.error_counts || {}).forEach(([key, value]) => {
+      merged[key] = (merged[key] || 0) + Number(value || 0)
+    })
+  })
+  return merged
+})
+const hasAuthFailure = computed(() => Number(finalErrorCounts.value.HTTP_401 || 0) > 0 || Number(finalErrorCounts.value.HTTP_403 || 0) > 0)
 
 const metricItems = computed(() => [
   {
@@ -448,6 +470,10 @@ onBeforeUnmount(() => {
 
 .achievement-note {
   margin-top: 12px;
+}
+
+.run-alert {
+  margin: 12px 0;
 }
 
 @media (max-width: 1180px) {

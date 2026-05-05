@@ -50,6 +50,15 @@
       </div>
       <div class="section-body">
         <el-alert
+          v-if="hasAuthFailure"
+          class="report-alert"
+          title="认证失败 / API Key 无效"
+          description="本次结果中存在 401/403 响应，说明密钥、权限或接入域名存在问题；请先修正认证后再参考吞吐和容量建议。"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+        <el-alert
           v-if="!config.enable_stream"
           class="report-alert"
           title="非流式模式下 TTFT / Decode 无法准确测量"
@@ -403,6 +412,18 @@ const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
 const expectedMetrics = computed(() => config.value.expected_metrics || summary.value?.config?.expected_metrics || null)
 const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
+const resultErrorCounts = computed(() => {
+  if (!isMatrix.value) return results.value.error_counts || {}
+  const merged = {}
+  const points = summary.value.results_matrix || []
+  points.forEach((point) => {
+    Object.entries(point.results?.error_counts || {}).forEach(([key, value]) => {
+      merged[key] = (merged[key] || 0) + Number(value || 0)
+    })
+  })
+  return merged
+})
+const hasAuthFailure = computed(() => Number(resultErrorCounts.value.HTTP_401 || 0) > 0 || Number(resultErrorCounts.value.HTTP_403 || 0) > 0)
 const stableMatrixPoints = computed(() => matrixPoints.value.filter((item) => (
   Number(item.success_rate || 0) >= 0.99 && Number(item.latency_p95 || 0) > 0
 )))
@@ -411,6 +432,14 @@ const bestStableMatrixPoint = computed(() => {
   return [...candidates].sort((a, b) => Number(b.total_tpm || 0) - Number(a.total_tpm || 0))[0] || null
 })
 const capacityRecommendation = computed(() => {
+  if (hasAuthFailure.value) {
+    return {
+      label: '认证失败',
+      title: '当前结果不能作为容量参考',
+      description: '本次测试存在 401/403，先修正 API Key、权限或接入域名，再重新测试。',
+      type: 'danger'
+    }
+  }
   if (isMatrix.value) {
     const point = bestStableMatrixPoint.value
     if (!point) {
@@ -672,7 +701,7 @@ const diagnosticStatus = computed(() => {
 })
 
 const diagnosticCards = computed(() => {
-  const errorCounts = charts.value.error_counts || {}
+  const errorCounts = isMatrix.value ? resultErrorCounts.value : (charts.value.error_counts || {})
   const topError = Object.entries(errorCounts).sort((a, b) => Number(b[1]) - Number(a[1]))[0]
   return [
     {
@@ -715,6 +744,7 @@ const matrixMetricItems = computed(() => {
 })
 
 const reportConclusion = computed(() => {
+  if (hasAuthFailure.value) return { label: '认证失败', type: 'danger' }
   if (isMatrix.value) return matrixConclusion.value
   const successRate = Number(results.value.success_rate || 0)
   const p95 = Number(results.value.latency_sec_p95 || 0)
@@ -770,6 +800,14 @@ const ttftDecodeDescription = computed(() => {
 })
 const conclusionAdvice = computed(() => {
   const items = []
+  if (hasAuthFailure.value) {
+    items.push({
+      title: '认证失败',
+      description: '本次结果里出现 401/403，请先修正 API Key 和权限，再重新压测。',
+      type: 'error'
+    })
+    return items
+  }
   if (isMatrix.value) {
     const unstable = matrixPoints.value.filter((item) => Number(item.success_rate || 0) < 0.99)
     if (unstable.length) {
@@ -865,7 +903,7 @@ const ttftDecodeOption = computed(() => {
 })
 
 const errorOption = computed(() => {
-  const counts = charts.value.error_counts || {}
+  const counts = isMatrix.value ? resultErrorCounts.value : (charts.value.error_counts || {})
   const data = Object.entries(counts).map(([name, value]) => ({ name, value }))
   return {
     tooltip: { trigger: 'item' },

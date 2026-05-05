@@ -361,6 +361,20 @@ class LoadTester:
             total_tokens = input_tokens + output_tokens
         return output_tokens, total_tokens
 
+    @staticmethod
+    def _extract_protocol_error(data: Any) -> str | None:
+        if not isinstance(data, dict):
+            return None
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("type") or error.get("code")
+            if message:
+                return str(message)
+            return "响应包含 error 字段"
+        if error:
+            return str(error)
+        return None
+
     def _create_result(
         self,
         request_id: int,
@@ -428,6 +442,32 @@ class LoadTester:
                                 # 解析 SSE 流
                                 full_text = b''.join(chunks).decode('utf-8', errors='ignore')
                                 output_tokens, total_tokens = self._parse_stream_usage(full_text)
+                                for line in full_text.split('\n'):
+                                    line = line.strip()
+                                    if not line.startswith('data: '):
+                                        continue
+                                    data_str = line[6:]
+                                    if data_str == '[DONE]':
+                                        continue
+                                    try:
+                                        data = json.loads(data_str)
+                                    except Exception:
+                                        continue
+                                    protocol_error = self._extract_protocol_error(data)
+                                    if protocol_error:
+                                        return self._create_result(
+                                            request_id=request_id,
+                                            started_at=started_at,
+                                            t0=t0,
+                                            ok=False,
+                                            status=resp.status,
+                                            ttft=ttft,
+                                            output_tokens=0,
+                                            total_tokens=self.actual_input_tokens,
+                                            error_type="PROTOCOL_ERROR",
+                                            error_message=protocol_error,
+                                            attempt=attempt,
+                                        )
 
                                 return self._create_result(
                                     request_id=request_id,
@@ -467,6 +507,21 @@ class LoadTester:
                                 data = json.loads(text)
                                 usage = {}
                                 if isinstance(data, dict):
+                                    protocol_error = self._extract_protocol_error(data)
+                                    if protocol_error:
+                                        return self._create_result(
+                                            request_id=request_id,
+                                            started_at=started_at,
+                                            t0=t0,
+                                            ok=False,
+                                            status=resp.status,
+                                            ttft=None,
+                                            output_tokens=0,
+                                            total_tokens=self.actual_input_tokens,
+                                            error_type="PROTOCOL_ERROR",
+                                            error_message=protocol_error,
+                                            attempt=attempt,
+                                        )
                                     usage = data.get("usage") or data.get("usageMetadata") or {}
                                 output_tokens, total_tokens = self._extract_tokens(usage)
                             except Exception:

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from backend.app.config import settings
 from backend.app.core.progress import ProgressHub
+from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
 from backend.app.core.test_runner import WebTestRunner
 from backend.app.models.schemas import TestCreate
@@ -47,6 +48,13 @@ class TaskManager:
             raise ValueError(f"单次测试并发不能超过 {settings.max_concurrency_per_test}")
         if self.running_count() >= settings.max_running_tests:
             raise ValueError(f"同时运行任务数不能超过 {settings.max_running_tests}")
+
+        try:
+            preflight = await validate_api_credentials(_model_dump(payload))
+        except PreflightError as exc:
+            raise ValueError(str(exc)) from exc
+        if not preflight.ok:
+            raise ValueError(preflight.message or "API Key 无效或无权限，无法启动测试")
 
         task_id = str(uuid4())
         self.repository.create_task(task_id, payload)
@@ -94,6 +102,7 @@ class TaskManager:
             )
             result = await runner.run()
             files = result["files"]
+            final_status = self._final_status_from_summary(result.get("summary"))
             self.repository.save_result(
                 task_id,
                 summary=result["summary"],
@@ -102,8 +111,10 @@ class TaskManager:
                 report_md_path=files["report_md_path"],
                 report_html_path=files["report_html_path"],
                 matrix_csv_path=files["matrix_csv_path"],
+                error_message=self._final_error_message(result.get("summary")) if final_status == "failed" else None,
             )
-            final_status = "cancelled" if stop_event.is_set() else "completed"
+            if stop_event.is_set():
+                final_status = "cancelled"
             self.repository.update_task_status(task_id, final_status, completed_at=datetime.utcnow())
             self.repository.add_event(task_id, "info", f"任务已{final_status}")
             await self.progress_hub.publish_status(task_id, final_status)
@@ -116,3 +127,50 @@ class TaskManager:
             await self.progress_hub.publish_log(task_id, "error", message)
         finally:
             self.stop_events.pop(task_id, None)
+
+    @staticmethod
+    def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
+        if not summary:
+            return {}
+        if summary.get("matrix"):
+            points = summary.get("results_matrix") or []
+            if not points:
+                return {}
+            merged_errors: dict[str, int] = {}
+            total_requests = 0
+            successful_requests = 0
+            best_tpm = 0.0
+            for point in points:
+                results = point.get("results") or {}
+                total_requests += int(results.get("total_requests") or 0)
+                successful_requests += int(results.get("successful_requests") or 0)
+                best_tpm = max(best_tpm, float(results.get("total_tpm") or 0))
+                for key, value in (results.get("error_counts") or {}).items():
+                    merged_errors[key] = merged_errors.get(key, 0) + int(value or 0)
+            return {
+                "total_requests": total_requests,
+                "successful_requests": successful_requests,
+                "success_rate": successful_requests / total_requests if total_requests else None,
+                "total_tpm": best_tpm,
+                "error_counts": merged_errors,
+            }
+        return summary.get("results") or {}
+
+    @classmethod
+    def _final_status_from_summary(cls, summary: dict[str, Any] | None) -> str:
+        results = cls._summary_results(summary)
+        total_requests = int(results.get("total_requests") or 0)
+        successful_requests = int(results.get("successful_requests") or 0)
+        if total_requests > 0 and successful_requests == 0:
+            return "failed"
+        return "completed"
+
+    @classmethod
+    def _final_error_message(cls, summary: dict[str, Any] | None) -> str | None:
+        results = cls._summary_results(summary)
+        error_counts = results.get("error_counts") or {}
+        if error_counts.get("HTTP_401") or error_counts.get("HTTP_403"):
+            return "API Key 无效或无权限"
+        if int(results.get("total_requests") or 0) > 0 and int(results.get("successful_requests") or 0) == 0:
+            return "本次测试全部请求失败"
+        return None

@@ -8,16 +8,16 @@
     <el-table-column prop="model" label="模型" min-width="120" show-overflow-tooltip />
     <el-table-column prop="status" label="状态" width="110">
       <template #default="{ row }">
-        <el-tag :type="statusType(row.status)" effect="plain">{{ statusText(row.status) }}</el-tag>
+        <el-tag :type="healthStatusType(row)" effect="plain">{{ healthStatusText(row) }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column prop="concurrency" label="并发" width="90" />
     <el-table-column prop="input_tokens" label="输入 Token" width="120" />
     <el-table-column label="成功率" width="110">
-      <template #default="{ row }">{{ percent(row.summary?.results?.success_rate) }}</template>
+      <template #default="{ row }">{{ percent(summaryResults(row).success_rate) }}</template>
     </el-table-column>
     <el-table-column label="TPM" width="130">
-      <template #default="{ row }">{{ number(row.summary?.results?.total_tpm) }}</template>
+      <template #default="{ row }">{{ number(summaryResults(row).total_tpm) }}</template>
     </el-table-column>
     <el-table-column label="创建时间" min-width="170">
       <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
@@ -84,6 +84,56 @@ function statusType(status) {
   if (['stopping', 'cancelled', 'interrupted'].includes(status)) return 'warning'
   if (status === 'running') return 'primary'
   return 'info'
+}
+
+function healthStatusText(row) {
+  if (hasAuthError(row)) return '认证失败'
+  const results = summaryResults(row)
+  if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
+    return '异常完成'
+  }
+  return statusText(row.status)
+}
+
+function healthStatusType(row) {
+  if (hasAuthError(row)) return 'danger'
+  const results = summaryResults(row)
+  if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
+    return 'warning'
+  }
+  return statusType(row.status)
+}
+
+function hasAuthError(row) {
+  const errorCounts = summaryResults(row).error_counts || {}
+  return Number(errorCounts.HTTP_401 || 0) > 0 || Number(errorCounts.HTTP_403 || 0) > 0
+}
+
+function summaryResults(row) {
+  const summary = row.summary || {}
+  if (!summary.matrix) return summary.results || {}
+  const points = summary.results_matrix || []
+  if (!points.length) return {}
+  const mergedErrors = {}
+  let totalRequests = 0
+  let successfulRequests = 0
+  let tpm = 0
+  points.forEach((point) => {
+    const results = point.results || {}
+    totalRequests += Number(results.total_requests || 0)
+    successfulRequests += Number(results.successful_requests || 0)
+    tpm = Math.max(tpm, Number(results.total_tpm || 0))
+    Object.entries(results.error_counts || {}).forEach(([key, value]) => {
+      mergedErrors[key] = (mergedErrors[key] || 0) + Number(value || 0)
+    })
+  })
+  return {
+    total_requests: totalRequests,
+    successful_requests: successfulRequests,
+    success_rate: totalRequests ? successfulRequests / totalRequests : null,
+    total_tpm: tpm,
+    error_counts: mergedErrors
+  }
 }
 
 function protocolText(protocol) {
