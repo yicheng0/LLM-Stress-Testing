@@ -197,6 +197,7 @@ let protocolChart
 
 const activeStatuses = ['queued', 'running', 'stopping']
 const activeTasks = computed(() => items.value.filter((item) => activeStatuses.includes(item.status)))
+const hasActiveTasks = computed(() => Number(dashboard.value?.active_tasks || activeTasks.value.length) > 0)
 const recentItems = computed(() => [...items.value].sort(taskPriority).slice(0, 8))
 const latestReportTask = computed(() => recentItems.value.find((item) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(item.status)))
 const aggregate = computed(() => {
@@ -228,6 +229,7 @@ const minAchievement = computed(() => {
   return ratios.length ? Math.min(...ratios) : null
 })
 const healthTone = computed(() => {
+  if (!hasActiveTasks.value) return 'ok'
   if (refreshError.value || failedCount.value > 0 || numeric(aggregate.value.successRate, 1) < 0.95) return 'danger'
   if (minAchievement.value !== null && minAchievement.value < 0.6) return 'warning'
   return 'ok'
@@ -267,22 +269,22 @@ const metricCards = computed(() => [
   },
   {
     label: '实时 RPM',
-    value: number(aggregate.value.rpm),
-    sub: targetText(aggregate.value.rpm, aggregate.value.expectedRpm),
+    value: hasActiveTasks.value ? number(aggregate.value.rpm) : '-',
+    sub: hasActiveTasks.value ? targetText(aggregate.value.rpm, aggregate.value.expectedRpm) : '暂无运行任务',
     icon: TrendCharts,
     tone: 'green'
   },
   {
     label: '实时 TPM',
-    value: number(aggregate.value.tpm),
-    sub: targetText(aggregate.value.tpm, aggregate.value.expectedTpm),
+    value: hasActiveTasks.value ? number(aggregate.value.tpm) : '-',
+    sub: hasActiveTasks.value ? targetText(aggregate.value.tpm, aggregate.value.expectedTpm) : '暂无运行任务',
     icon: Histogram,
     tone: 'purple'
   },
   {
     label: '成功率 / P95',
-    value: percent(aggregate.value.successRate),
-    sub: `P95 ${seconds(aggregate.value.p95)} / 预期 ${seconds(aggregate.value.expectedLatency)}`,
+    value: hasActiveTasks.value ? percent(aggregate.value.successRate) : '-',
+    sub: hasActiveTasks.value ? `P95 ${seconds(aggregate.value.p95)} / 预期 ${seconds(aggregate.value.expectedLatency)}` : '等待实时样本',
     icon: DataAnalysis,
     tone: healthTone.value === 'danger' ? 'red' : 'orange'
   }
@@ -322,7 +324,7 @@ async function loadData() {
     dashboard.value = data
     items.value = data.recent_tasks || []
     total.value = data.total || 0
-    lastRefreshAt.value = new Date().toISOString()
+    lastRefreshAt.value = normalizeBackendTime(data.generated_at) || new Date().toISOString()
     refreshError.value = ''
     pushSample()
   } catch (error) {
@@ -570,6 +572,13 @@ function time(value) {
     minute: '2-digit',
     second: '2-digit'
   }).format(date)
+}
+
+function normalizeBackendTime(value) {
+  if (!value) return ''
+  const text = String(value)
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(text)) return text
+  return `${text}Z`
 }
 
 function number(value) {

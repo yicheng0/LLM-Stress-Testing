@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
@@ -17,6 +18,7 @@ from backend.app.models.database import TestEvent, TestResult, TestTask
 from backend.app.models.schemas import CleanupOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
+logger = logging.getLogger(__name__)
 
 
 def get_repository() -> Repository:
@@ -163,6 +165,13 @@ def _dashboard_diagnostics(
             "reasons": [],
             "actions": [{"type": "new_test", "label": "新建测试"}],
         }
+    if active_tasks == 0:
+        return {
+            "overall_status": "idle",
+            "summary": "暂无运行中任务，实时指标将在下一次压测启动后更新。",
+            "reasons": [],
+            "actions": [{"type": "open_report", "label": "查看最新报告"}],
+        }
 
     reasons: list[str] = []
     actions: list[dict[str, str]] = []
@@ -273,6 +282,9 @@ async def start_test(
         task_id = await manager.start_test(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to start test")
+        raise HTTPException(status_code=502, detail=f"启动测试失败：{exc}") from exc
 
     item = repository.get_task(task_id)
     if not item:
@@ -327,9 +339,7 @@ async def realtime_dashboard(
     active_statuses = {"queued", "running", "stopping"}
     active_tasks = 0
     metric_sources: list[dict[str, Any]] = []
-    fallback_metric_sources: list[dict[str, Any]] = []
     target_sources: list[dict[str, float | None]] = []
-    fallback_target_sources: list[dict[str, float | None]] = []
     recent_tasks = []
 
     for task, result in rows:
@@ -344,17 +354,23 @@ async def realtime_dashboard(
             error_type = result.error_message.split(":", 1)[0][:80] or "unknown"
             error_counts[error_type] = error_counts.get(error_type, 0) + 1
 
-        progress = progress_hub.snapshot(task.id) or {}
         summary = _safe_load_summary(result)
         summary_results = _summary_results(summary)
         is_active = task.status in active_statuses
         if is_active:
             active_tasks += 1
 
-        item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
-        item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
-        item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
-        item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
+        progress = progress_hub.snapshot(task.id) if is_active else None
+        if progress:
+            item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
+            item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
+            item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
+            item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
+        else:
+            item_rpm = _num(summary_results.get("rpm"))
+            item_tpm = _num(summary_results.get("total_tpm"))
+            item_success_rate = summary_results.get("success_rate")
+            item_p95 = summary_results.get("latency_sec_p95")
         metric_item = {
             "rpm": item_rpm,
             "tpm": item_tpm,
@@ -365,8 +381,6 @@ async def realtime_dashboard(
         if is_active:
             metric_sources.append(metric_item)
             target_sources.append(targets)
-        fallback_metric_sources.append(metric_item)
-        fallback_target_sources.append(targets)
 
         recent_tasks.append({
             "id": task.id,
@@ -388,8 +402,7 @@ async def realtime_dashboard(
             "issue_tags": _task_issue_tags(task.status, metric_item, targets, error_message),
         })
 
-    sources = metric_sources or fallback_metric_sources[:12]
-    target_sources = target_sources or fallback_target_sources[:12]
+    sources = metric_sources
     rpm = sum(_num(item.get("rpm")) for item in sources)
     tpm = sum(_num(item.get("tpm")) for item in sources)
     expected_rpm = sum(_num(item.get("rpm")) for item in target_sources if item.get("rpm") is not None)
