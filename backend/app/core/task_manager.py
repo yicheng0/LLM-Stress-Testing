@@ -33,7 +33,29 @@ class TaskManager:
         self.stop_events: dict[str, asyncio.Event] = {}
 
     def running_count(self) -> int:
+        self._discard_finished_tasks()
         return sum(1 for task in self.tasks.values() if not task.done())
+
+    def reconcile_active_tasks(self) -> int:
+        self._discard_finished_tasks()
+        live_task_ids = {task_id for task_id, task in self.tasks.items() if not task.done()}
+        stale_task_ids = [
+            task.id
+            for task in self.repository.list_active_tasks()
+            if task.id not in live_task_ids
+        ]
+        self.repository.mark_tasks_interrupted(stale_task_ids)
+        return len(live_task_ids)
+
+    def _discard_finished_tasks(self) -> None:
+        finished_task_ids = [
+            task_id
+            for task_id, task in self.tasks.items()
+            if task.done()
+        ]
+        for task_id in finished_task_ids:
+            self.tasks.pop(task_id, None)
+            self.stop_events.pop(task_id, None)
 
     async def start_test(self, payload: TestCreate) -> str:
         max_concurrency = payload.concurrency
@@ -127,6 +149,7 @@ class TaskManager:
             await self.progress_hub.publish_log(task_id, "error", message)
         finally:
             self.stop_events.pop(task_id, None)
+            self.tasks.pop(task_id, None)
 
     @staticmethod
     def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:

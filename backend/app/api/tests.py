@@ -292,7 +292,9 @@ async def list_tests(
     created_to: datetime | None = None,
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
+    manager: TaskManager = Depends(get_task_manager),
 ) -> TestListOut:
+    manager.reconcile_active_tasks()
     total, rows = repository.list_tasks(
         page,
         page_size,
@@ -314,7 +316,9 @@ async def list_tests(
 async def realtime_dashboard(
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
+    manager: TaskManager = Depends(get_task_manager),
 ) -> dict[str, Any]:
+    manager.reconcile_active_tasks()
     total, rows = repository.list_tasks(1, 100)
     status_counts: dict[str, int] = {}
     protocol_counts = {"openai": 0, "anthropic": 0, "gemini": 0}
@@ -454,7 +458,9 @@ async def get_test(
     task_id: str,
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
+    manager: TaskManager = Depends(get_task_manager),
 ) -> TestTaskOut:
+    manager.reconcile_active_tasks()
     item = repository.get_task(task_id)
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
