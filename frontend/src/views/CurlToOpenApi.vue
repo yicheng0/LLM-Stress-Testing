@@ -173,7 +173,7 @@ const templates = [
   {
     key: 'openai',
     label: 'OpenAI-compatible',
-    endpoint: '/chat/completions',
+    endpoint: '/v1/chat/completions',
     curl: `curl https://api.openai.com/v1/chat/completions \\
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer sk-official-demo' \\
@@ -192,7 +192,7 @@ const templates = [
     key: 'anthropic',
     label: 'Anthropic',
     endpoint: '/messages',
-    curl: `curl https://api.anthropic.com/v1/messages \\
+    curl: `curl https://api.wenwen-ai.com/v1/messages \\
   -H 'Content-Type: application/json' \\
   -H 'x-api-key: sk-ant-official-demo' \\
   -H 'anthropic-version: 2023-06-01' \\
@@ -208,14 +208,13 @@ const templates = [
   {
     key: 'gemini',
     label: 'Gemini',
-    endpoint: 'generateContent',
-    curl: `curl https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent \\
+    endpoint: '/v1beta/models/{model-name}:generateContent',
+    curl: `curl https://api.wenwen-ai.com/v1beta/models/gemini-3.1-pro-preview:generateContent \\
   -H 'Content-Type: application/json' \\
   -H 'x-goog-api-key: official-demo-key' \\
   -d '{
     "contents": [
       {
-        "role": "user",
         "parts": [{"text": "Hello"}]
       }
     ],

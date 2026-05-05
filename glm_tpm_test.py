@@ -10,11 +10,11 @@ LLM API 压测脚本（OpenAI 兼容接口）
 - 输出 JSON 明细和 Markdown 摘要
 
 示例：
-python load_test_llm_api.py \
-  --base-url https://your-openai-compatible-endpoint/v1 \
+python glm_tpm_test.py \
+  --base-url https://your-openai-compatible-endpoint \
   --api-key $API_KEY \
   --model your-model \
-  --endpoint /chat/completions \
+  --endpoint /v1/chat/completions \
   --concurrency 200 \
   --duration-sec 300 \
   --input-tokens 100000 \
@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import aiohttp
+
+from backend.app.core.protocol_utils import build_request_url, normalize_endpoint
 
 try:
     import tiktoken
@@ -90,15 +92,15 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
     "openai": ProtocolSpec(
         name="openai",
         label="OpenAI-compatible",
-        default_base_url="https://api.example.com/v1",
-        stream_endpoint="/chat/completions",
-        non_stream_endpoint="/chat/completions",
+        default_base_url="https://api.wenwen-ai.com",
+        stream_endpoint="/v1/chat/completions",
+        non_stream_endpoint="/v1/chat/completions",
         default_model="gpt-5.5",
     ),
     "anthropic": ProtocolSpec(
         name="anthropic",
         label="Anthropic Messages",
-        default_base_url="https://api.anthropic.com/v1",
+        default_base_url="https://api.wenwen-ai.com",
         stream_endpoint="/messages",
         non_stream_endpoint="/messages",
         default_model="claude-sonnet-4-6-20260218",
@@ -106,9 +108,9 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
     "gemini": ProtocolSpec(
         name="gemini",
         label="Gemini API",
-        default_base_url="https://generativelanguage.googleapis.com/v1beta",
-        stream_endpoint="/models/{model}:streamGenerateContent?alt=sse",
-        non_stream_endpoint="/models/{model}:generateContent",
+        default_base_url="https://api.wenwen-ai.com",
+        stream_endpoint="/v1beta/models/{model-name}:streamGenerateContent",
+        non_stream_endpoint="/v1beta/models/{model-name}:generateContent",
         default_model="gemini-3.1-pro-preview",
     ),
 }
@@ -258,7 +260,6 @@ class LoadTester:
                 },
                 "contents": [
                     {
-                        "role": "user",
                         "parts": [
                             {"text": self.prompt}
                         ],
@@ -286,7 +287,7 @@ class LoadTester:
             }
 
         # 默认按 chat.completions 格式发送；也支持 responses 接口。
-        if self.args.endpoint.endswith("/responses"):
+        if normalize_endpoint(self.args.endpoint, "openai").endswith("/responses"):
             return {
                 "model": self.args.model,
                 "input": self.prompt,
@@ -338,8 +339,7 @@ class LoadTester:
         if self.api_protocol() == "gemini":
             if not endpoint or endpoint in LEGACY_DEFAULT_ENDPOINTS:
                 endpoint = spec.default_endpoint(self.args.enable_stream)
-            endpoint = endpoint.replace("{model}", self.args.model)
-        return self.args.base_url.rstrip("/") + endpoint
+        return build_request_url(self.args.base_url, endpoint, self.api_protocol(), model=self.args.model)
 
     @staticmethod
     def _extract_tokens(usage: dict) -> tuple[int, int]:
@@ -1782,7 +1782,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="https://api.wenwen-ai.com", help="例如 https://api.wenwen-ai.com")
     parser.add_argument("--api-key", default=os.getenv("API_KEY") or os.getenv("LLM_API_KEY"), help="API Key，默认读取 API_KEY 或 LLM_API_KEY 环境变量")
     parser.add_argument("--model", default="gpt-5.5", help="模型名")
-    parser.add_argument("--endpoint", default="/chat/completions", help="/chat/completions 或 /responses")
+    parser.add_argument("--endpoint", default="/v1/chat/completions", help="/v1/chat/completions 或 /v1/responses")
     parser.add_argument("--concurrency", type=int, default=500)
     parser.add_argument("--duration-sec", type=int, default=300)
     parser.add_argument("--input-tokens", type=int, default=60000)

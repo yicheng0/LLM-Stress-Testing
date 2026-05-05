@@ -16,7 +16,7 @@ class TestCreate(BaseModel):
     base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
     api_key: str = Field(..., min_length=1)
     model: str = Field(default="gpt-5.5", min_length=1)
-    endpoint: str = Field(default="/chat/completions")
+    endpoint: str = Field(default="/v1/chat/completions")
     concurrency: int = Field(default=10, ge=1, le=1000)
     duration_sec: int = Field(default=60, ge=1, le=86400)
     input_tokens: int = Field(default=1000, ge=1)

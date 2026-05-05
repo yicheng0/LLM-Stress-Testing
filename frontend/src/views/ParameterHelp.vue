@@ -158,8 +158,8 @@ const groups = [
         name: 'Endpoint',
         field: 'endpoint',
         meaning: '协议下的具体接口路径。',
-        recommendation: '通常使用默认值；OpenAI-compatible 为 /chat/completions，Anthropic 为 /messages，Gemini 为 generateContent。',
-        note: 'Gemini 的 {model} 会在发送请求时替换为模型名称。'
+        recommendation: '通常使用默认值；OpenAI-compatible 为 /v1/chat/completions，Anthropic 为 /v1/messages，Gemini 为 /v1beta/models/{model-name}:generateContent。',
+        note: 'Gemini 的 {model-name} 会在发送请求时替换为模型名称；也兼容旧写法 {model}。'
       },
       {
         name: '模型名称',

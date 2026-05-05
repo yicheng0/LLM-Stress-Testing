@@ -77,7 +77,7 @@
           </el-select>
         </el-form-item>
         <el-form-item v-if="isExpertMode" label="Endpoint" prop="endpoint">
-          <el-input v-model="form.endpoint" placeholder="/chat/completions" />
+          <el-input v-model="form.endpoint" placeholder="/v1/chat/completions" />
         </el-form-item>
         <el-form-item :label="apiKeyLabel" prop="api_key" class="full-row">
           <el-input v-model="form.api_key" type="password" show-password autocomplete="off" />
@@ -587,7 +587,7 @@ const defaults = {
   base_url: 'https://api.wenwen-ai.com',
   api_key: '',
   model: 'gpt-5.5',
-  endpoint: '/chat/completions',
+  endpoint: '/v1/chat/completions',
   concurrency: 10,
   duration_sec: 60,
   input_tokens: 1000,
@@ -703,7 +703,7 @@ const testPresets = [
   {
     key: 'quick',
     label: '快速验证',
-    description: '用于连通性、鉴权和报告链路检查。',
+    description: '用于连通性和报告链路检查。',
     meta: '5 并发 / 30s / 1k',
     values: {
       name: '快速验证',
@@ -800,18 +800,18 @@ const domainOptions = [
 ]
 const protocolDefaults = {
   openai: {
-    stream_endpoint: '/chat/completions',
-    non_stream_endpoint: '/chat/completions',
+    stream_endpoint: '/v1/chat/completions',
+    non_stream_endpoint: '/v1/chat/completions',
     model: defaults.model
   },
   anthropic: {
-    stream_endpoint: '/messages',
-    non_stream_endpoint: '/messages',
+    stream_endpoint: '/v1/messages',
+    non_stream_endpoint: '/v1/messages',
     model: 'claude-sonnet-4-6-20260218'
   },
   gemini: {
-    stream_endpoint: '/models/{model}:streamGenerateContent?alt=sse',
-    non_stream_endpoint: '/models/{model}:generateContent',
+    stream_endpoint: '/v1beta/models/{model-name}:streamGenerateContent',
+    non_stream_endpoint: '/v1beta/models/{model-name}:generateContent',
     model: 'gemini-3.1-pro-preview'
   }
 }
@@ -820,7 +820,7 @@ const protocolOptions = [
     value: 'openai',
     label: 'OpenAI-compatible',
     description: '适配 GLM、Qwen、DeepSeek、OpenAI 兼容接口',
-    endpoint: '/chat/completions',
+    endpoint: '/v1/chat/completions',
     auth: 'Authorization: Bearer',
     icon: Connection
   },
@@ -828,7 +828,7 @@ const protocolOptions = [
     value: 'anthropic',
     label: 'Anthropic Messages',
     description: '使用 x-api-key 和 anthropic-version 请求头',
-    endpoint: '/messages',
+    endpoint: '/v1/messages',
     auth: 'x-api-key',
     icon: ChatLineRound
   },
@@ -836,7 +836,7 @@ const protocolOptions = [
     value: 'gemini',
     label: 'Gemini API',
     description: '使用 x-goog-api-key 和 generateContent 协议',
-    endpoint: '/models/{model}:generateContent',
+    endpoint: '/v1beta/models/{model-name}:generateContent',
     auth: 'x-goog-api-key',
     icon: Cpu
   }
@@ -872,12 +872,14 @@ const visibleThroughputTargets = computed(() => (
   isExpertMode.value ? throughputTargets : throughputTargets.filter((preset) => preset.mode === 'rpm')
 ))
 const protocolText = computed(() => selectedProtocol.value.label)
-const resolvedEndpoint = computed(() => String(form.endpoint || '').replace('{model}', form.model || '{model}'))
+const resolvedEndpoint = computed(() => String(form.endpoint || '')
+  .replace('{model-name}', form.model || '{model-name}')
+  .replace('{model}', form.model || '{model}'))
 const endpointMismatch = computed(() => {
   const expected = endpointFor(form.api_protocol)
   if (!form.endpoint || !expected) return false
   if (form.endpoint === expected) return false
-  if (form.api_protocol === 'openai' && form.endpoint === '/responses') return false
+  if (form.api_protocol === 'openai' && ['/responses', '/v1/responses'].includes(form.endpoint)) return false
   return isKnownEndpoint(form.endpoint)
 })
 const matrixPointCount = computed(() => {
@@ -1166,7 +1168,7 @@ function isKnownBaseUrl(value) {
 function isKnownEndpoint(value) {
   return Object.values(protocolDefaults).some((item) => (
     item.stream_endpoint === value || item.non_stream_endpoint === value
-  )) || value === '/responses'
+  )) || ['/responses', '/v1/responses'].includes(value)
 }
 
 function endpointFor(protocol, enableStream = form.enable_stream) {

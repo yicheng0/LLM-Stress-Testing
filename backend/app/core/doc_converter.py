@@ -208,10 +208,6 @@ def normalize_endpoint(url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         raise CurlConvertError("URL 必须包含协议和域名")
     path = parsed.path or "/"
-    for prefix in ("/v1beta/", "/v1/"):
-        if path.startswith(prefix):
-            path = "/" + path[len(prefix):]
-            break
     query = sanitize_query(parsed.query)
     return f"{path}{query}"
 

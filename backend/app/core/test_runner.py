@@ -44,7 +44,7 @@ class WebTestRunner:
             "base_url": self.config["base_url"],
             "api_key": self.config["api_key"],
             "model": self.config["model"],
-            "endpoint": self.config.get("endpoint", "/chat/completions"),
+            "endpoint": self.config.get("endpoint", "/v1/chat/completions"),
             "concurrency": int(self.config.get("concurrency", 10)),
             "duration_sec": int(self.config.get("duration_sec", 60)),
             "input_tokens": int(self.config.get("input_tokens", 1000)),
