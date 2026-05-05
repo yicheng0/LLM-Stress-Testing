@@ -1,0 +1,20 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Local logs and process output
+*.log
+*.err.log
+*.out.log
+
+# Local IDE and agent state
+.idea/
+.claude/
+
+# Frontend runtime/build artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Local app state and generated reports
+data/
+results/

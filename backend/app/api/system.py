@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.config import settings
+from backend.app.core.task_manager import TaskManager
 from backend.app.core.version_service import get_version_snapshot, run_self_update
 from backend.app.models.schemas import VersionInfoOut, VersionUpdateOut, VersionUpdateRequest
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+def get_task_manager() -> TaskManager:
+    from backend.app.main import task_manager
+
+    return task_manager
 
 
 @router.get("/version", response_model=VersionInfoOut)
@@ -28,16 +34,26 @@ async def check_version() -> VersionInfoOut:
 
 
 @router.post("/version/update", response_model=VersionUpdateOut)
-async def update_version(payload: VersionUpdateRequest) -> VersionUpdateOut:
+async def update_version(
+    payload: VersionUpdateRequest,
+    manager: TaskManager = Depends(get_task_manager),
+) -> VersionUpdateOut:
     if not settings.self_update_enabled:
         raise HTTPException(status_code=403, detail="当前环境未启用在线更新")
+
+    active_tasks = manager.reconcile_active_tasks()
+    if active_tasks:
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前有 {active_tasks} 个测试任务正在运行，请停止或等待完成后再更新",
+        )
 
     try:
         snapshot = get_version_snapshot(fetch=True)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"检查版本失败：{exc}") from exc
     if snapshot.dirty and not payload.force:
-        raise HTTPException(status_code=409, detail="工作区存在未提交修改，无法自动更新")
+        raise HTTPException(status_code=409, detail=snapshot.message or "工作区存在未提交修改，无法自动更新")
     if not snapshot.available:
         raise HTTPException(status_code=400, detail=snapshot.message or "当前环境无法在线更新")
 

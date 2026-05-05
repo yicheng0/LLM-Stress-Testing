@@ -47,13 +47,17 @@
             <span>状态</span>
             <el-tag :type="versionTagType" effect="plain" size="small">{{ versionStatusText }}</el-tag>
           </div>
+          <div v-if="versionState.dirty_paths?.length" class="version-detail">
+            <span>阻止更新</span>
+            <strong>{{ versionState.dirty_paths.slice(0, 3).join('、') }}{{ versionState.dirty_paths.length > 3 ? ' 等' : '' }}</strong>
+          </div>
           <div class="version-actions">
             <el-button :icon="Refresh" :loading="versionChecking" size="small" @click="checkVersion">
               检测版本
             </el-button>
             <el-button
               :icon="Download"
-              :disabled="!versionState.update_enabled || !versionState.update_available || !versionState.available"
+              :disabled="!versionState.update_enabled || !versionState.update_available || !versionState.available || !!versionState.dirty"
               :loading="versionUpdating"
               size="small"
               type="primary"
@@ -128,6 +132,7 @@ const versionState = ref({
   ahead_count: null,
   behind_count: null,
   dirty: null,
+  dirty_paths: null,
   update_available: false,
   message: '点击“检测版本”查看远端更新',
   checked_at: null
@@ -166,6 +171,7 @@ const today = new Intl.DateTimeFormat('zh-CN', {
 
 const versionStatusText = computed(() => {
   if (!versionState.value.available) return '不可用'
+  if (versionState.value.dirty) return '有本地改动'
   if (!versionState.value.update_enabled) return '仅检测'
   if (versionState.value.update_available) return '可更新'
   if (versionState.value.checked_at) return '已最新'
@@ -174,6 +180,7 @@ const versionStatusText = computed(() => {
 
 const versionTagType = computed(() => {
   if (!versionState.value.available) return 'info'
+  if (versionState.value.dirty) return 'danger'
   if (!versionState.value.update_enabled) return 'info'
   if (versionState.value.update_available) return 'warning'
   if (versionState.value.checked_at) return 'success'
@@ -197,6 +204,7 @@ async function loadVersionInfo() {
     versionState.value = {
       ...versionState.value,
       available: false,
+      dirty_paths: null,
       message: error.message
     }
   }
@@ -233,6 +241,8 @@ async function confirmUpdate() {
       ...versionState.value,
       current_ref: result.current_ref || versionState.value.current_ref,
       latest_ref: result.latest_ref || versionState.value.latest_ref,
+      dirty: false,
+      dirty_paths: null,
       update_available: false,
       message: result.message || '更新已完成，请刷新页面'
     }
@@ -261,5 +271,19 @@ onMounted(() => {
   color: #64748b;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.version-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.version-detail strong {
+  font-weight: 600;
+  line-height: 1.4;
 }
 </style>

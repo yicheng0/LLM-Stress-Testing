@@ -6,9 +6,9 @@ cd "$repo_root"
 
 branch="$(git branch --show-current || true)"
 if [ -n "$branch" ]; then
-  git pull --ff-only origin "$branch"
+  git pull --ff-only --autostash origin "$branch"
 else
-  git pull --ff-only origin
+  git pull --ff-only --autostash origin
 fi
 
 if docker compose version >/dev/null 2>&1; then
