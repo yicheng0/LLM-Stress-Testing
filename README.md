@@ -86,10 +86,10 @@ The script bumps the patch version, syncs the frontend package files and backend
 
 See [docs/部署教程.md](docs/部署教程.md) for a step-by-step deployment guide, including first-time setup, Nginx reverse proxy, persistence, upgrades, and troubleshooting.
 
-Docker Compose defaults to non-common host ports:
+Docker Compose defaults to these host ports:
 
-- Web console: `18080`
-- Backend API: `18081`
+- Web console: `8080`
+- Backend API: `8081`
 
 ## CLI Example
 
