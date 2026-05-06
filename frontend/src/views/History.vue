@@ -31,8 +31,15 @@
         <el-button :icon="DataAnalysis" :disabled="!canCompare" @click="goCompare">
           对比 {{ selectedRows.length || '' }}
         </el-button>
-        <el-button :icon="Delete" type="warning" plain @click="cleanupExpired">
-          清理过期
+        <el-button
+          :icon="Delete"
+          type="danger"
+          plain
+          :disabled="!canBulkDelete"
+          :loading="bulkDeleting"
+          @click="confirmBulkDelete"
+        >
+          删除选中 {{ selectedRows.length || '' }}
         </el-button>
         <el-dropdown trigger="click" :disabled="!canExport" @command="exportSelectedReport">
           <el-button type="primary" :icon="Download">
@@ -69,7 +76,7 @@
         @report="row => router.push(`/tests/${row.id}/report`)"
         @copy="copyRerun"
         @delete="confirmDelete"
-        @selection-change="selectedRows = $event"
+        @selection-change="handleSelectionChange"
       />
       <div class="pagination-row">
         <el-pagination
@@ -91,15 +98,17 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, DataAnalysis, Delete, Download, RefreshLeft, Search } from '@element-plus/icons-vue'
 import HistoryTable from '../components/HistoryTable.vue'
-import { cleanupExpiredTests, deleteTest, downloadUrl } from '../api/client'
+import { deleteTest, deleteTests, downloadUrl } from '../api/client'
 import { useTestsStore } from '../stores/tests'
 
 const router = useRouter()
 const store = useTestsStore()
 const createdRange = ref([])
 const selectedRows = ref([])
+const bulkDeleting = ref(false)
 const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4)
 const canExport = computed(() => selectedRows.value.length === 1)
+const canBulkDelete = computed(() => selectedRows.value.length > 0)
 const expiredCount = computed(() => store.items.filter((item) => isExpired(item)).length)
 const retentionSummary = computed(() => {
   const nextExpiry = store.items
@@ -111,7 +120,7 @@ const retentionSummary = computed(() => {
   if (nextExpiry) {
     return `报告、明细和事件按后端保留策略自动到期；最近一条将在 ${formatTime(nextExpiry)} 过期。`
   }
-  return '报告、明细和事件仅用于测试诊断；到期后可点击“清理过期”删除本地数据。'
+  return '报告、明细和事件仅用于测试诊断；需要删除时请勾选记录后点击“删除选中”。'
 })
 
 function reload() {
@@ -154,23 +163,48 @@ async function confirmDelete(row) {
   }
 }
 
-async function cleanupExpired() {
+async function confirmBulkDelete() {
+  const ids = selectedRows.value.map((row) => row.id).filter(Boolean)
+  if (!ids.length) {
+    ElMessage.warning('请选择要删除的记录')
+    return
+  }
+
   try {
-    await ElMessageBox.confirm('确认清理所有超过保留时间的测试记录和结果文件？', '清理过期数据', {
-      type: 'warning',
-      confirmButtonText: '清理',
-      cancelButtonText: '取消'
-    })
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${ids.length} 条记录？删除后报告、明细、事件和结果文件将不可恢复。`,
+      '删除选中记录',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      }
+    )
   } catch {
     return
   }
+
+  bulkDeleting.value = true
   try {
-    const result = await cleanupExpiredTests()
-    ElMessage.success(`已清理 ${result.deleted || 0} 条过期数据`)
-    store.fetchHistory()
+    const result = await deleteTests(ids)
+    selectedRows.value = []
+    const deleted = result.deleted || 0
+    const notFound = result.not_found?.length || 0
+    if (notFound) {
+      ElMessage.warning(`已删除 ${deleted} 条，${notFound} 条记录不存在或已被删除`)
+    } else {
+      ElMessage.success(`已删除 ${deleted} 条记录`)
+    }
+    await store.fetchHistory()
   } catch (error) {
     ElMessage.error(error.message)
+  } finally {
+    bulkDeleting.value = false
   }
+}
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
 }
 
 function copyRerun(row) {

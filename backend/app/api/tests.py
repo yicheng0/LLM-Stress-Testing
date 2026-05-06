@@ -15,7 +15,7 @@ from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
-from backend.app.models.schemas import CleanupOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
+from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, CleanupOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
@@ -464,6 +464,26 @@ async def realtime_dashboard(
 async def cleanup_expired(repository: Repository = Depends(get_repository)) -> CleanupOut:
     deleted = repository.cleanup_expired_results()
     return CleanupOut(deleted=deleted, retention_hours=settings.result_retention_hours)
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteOut)
+async def bulk_delete_tests(
+    payload: BulkDeleteIn,
+    repository: Repository = Depends(get_repository),
+) -> BulkDeleteOut:
+    ids = list(dict.fromkeys(task_id.strip() for task_id in payload.ids if task_id and task_id.strip()))
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的记录")
+
+    deleted = 0
+    not_found: list[str] = []
+    for task_id in ids:
+        if repository.delete_task(task_id):
+            deleted += 1
+        else:
+            not_found.append(task_id)
+
+    return BulkDeleteOut(requested=len(ids), deleted=deleted, not_found=not_found)
 
 
 @router.get("/{task_id}", response_model=TestTaskOut)

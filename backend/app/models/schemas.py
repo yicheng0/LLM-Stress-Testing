@@ -105,6 +105,16 @@ class CleanupOut(BaseModel):
     retention_hours: int
 
 
+class BulkDeleteIn(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+class BulkDeleteOut(BaseModel):
+    requested: int
+    deleted: int
+    not_found: list[str]
+
+
 class VersionInfoOut(BaseModel):
     available: bool = True
     update_enabled: bool = False

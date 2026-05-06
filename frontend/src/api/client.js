@@ -67,6 +67,13 @@ export function deleteTest(id) {
   return request(`/api/tests/${id}`, { method: 'DELETE' })
 }
 
+export function deleteTests(ids) {
+  return request('/api/tests/bulk-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  })
+}
+
 export function cleanupExpiredTests() {
   return request('/api/tests/cleanup/expired', { method: 'POST' })
 }
