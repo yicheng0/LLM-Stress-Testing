@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 cmd = [
-    sys.executable, "glm_tpm_test.py",
+    sys.executable, "llm_load_test.py",
     "--concurrency", "500",
     "--duration-sec", "30",
     "--input-tokens", "60000",

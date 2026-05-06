@@ -9,7 +9,7 @@ from backend.app.config import settings
 from backend.app.core.progress import ProgressHub
 from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
-from backend.app.core.test_runner import WebTestRunner
+from backend.app.core.test_runner import WebLoadTestRunner
 from backend.app.models.schemas import TestCreate
 
 
@@ -81,6 +81,7 @@ class TaskManager:
         task_id = str(uuid4())
         self.repository.create_task(task_id, payload)
         self.repository.add_event(task_id, "info", "任务已创建")
+        self.repository.add_event(task_id, "info", preflight.message)
 
         stop_event = asyncio.Event()
         self.stop_events[task_id] = stop_event
@@ -114,7 +115,7 @@ class TaskManager:
             self.repository.add_event(task_id, "info", "任务开始运行")
             await self.progress_hub.publish_status(task_id, "running")
 
-            runner = WebTestRunner(
+            runner = WebLoadTestRunner(
                 task_id,
                 config,
                 settings.results_dir,

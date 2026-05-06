@@ -94,5 +94,5 @@ Docker Compose defaults to these host ports:
 ## CLI Example
 
 ```powershell
-python glm_tpm_test.py --base-url https://api.example.com/v1 --api-key $env:API_KEY --model glm-5.1 --concurrency 10 --duration-sec 60 --input-tokens 1000 --enable-stream
+python llm_load_test.py --base-url https://api.example.com/v1 --api-key $env:API_KEY --model glm-5.1 --concurrency 10 --duration-sec 60 --input-tokens 1000 --enable-stream
 ```

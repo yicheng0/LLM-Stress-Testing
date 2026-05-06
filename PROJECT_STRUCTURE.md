@@ -2,12 +2,14 @@
 
 ## 当前活跃文件
 
-### 核心脚本
-- **glm_tpm_test.py** (64KB, 1526行) - 主压测工具
-  - 支持流式TTFT测量
-  - 矩阵测试模式
-  - 完整的指标统计（TPM/TPS/TTFT/Decode）
-  - HTML可视化报告
+### 核心压测模块
+- **llm_load_test.py** - 推荐 CLI 启动入口
+- **loadtest/** - 可复用压测核心包
+  - config.py - CLI / Web 共用配置对象
+  - protocols.py - 多协议 URL、headers、payload、usage、error 处理
+  - executor.py / streaming.py - RequestExecutor、SseStreamParser 等单请求执行、重试和流式解析组件
+  - runner.py / summary.py - LoadTestRunner、MetricsSummaryBuilder 等并发调度、矩阵测试和指标汇总组件
+  - result_writer.py / reports.py - ReportArtifactWriter 和报告渲染组件
 
 ### 快速测试脚本
 - **quick_test.py** - 快速验证测试（并发10，30秒，1k tokens）
@@ -32,10 +34,8 @@
   - user_role.md - 用户角色
 
 ## 归档文件
-- **archive/** - 旧版本脚本（已被glm_tpm_test.py取代）
-  - load_test_llm_api(1).py
-  - load_test_llm_tpm.py
-  - README.md - 归档说明
+- **archive/** - 历史说明目录；旧版本脚本已删除，保留 README 作为说明
+  - README.md - 历史说明
 
 ## 输出目录
 - **results/** - 测试结果输出
@@ -43,3 +43,4 @@
   - details_*.jsonl - 详细数据
   - report_*.md - Markdown报告
   - report_*.html - HTML可视化报告
+

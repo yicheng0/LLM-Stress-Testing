@@ -12,31 +12,32 @@ GLM API Load Testing Suite - A comprehensive performance testing framework for L
 
 ### Main Components
 
-**glm_tpm_test.py** - Primary load testing engine (~1500 lines)
+**loadtest/** - Primary reusable load testing package
+- `llm_load_test.py` - CLI entrypoint
 - `TokenEstimator` - Token counting using tiktoken (falls back to character-based estimation)
 - `PromptFactory` - Generates prompts of target token length using repeated LOREM text blocks
-- `LoadTester` - Main orchestrator handling concurrent workers, request lifecycle, and metrics aggregation
+- `LoadTestRunner` - Main orchestrator handling concurrent workers, request lifecycle, and metrics aggregation
 - `RequestResult` - Dataclass capturing per-request metrics (latency, TTFT, tokens, errors)
 
 ### Request Flow
 
-1. **Initialization** (`LoadTester.__init__`)
+1. **Initialization** (`LoadTestRunner.__init__`)
    - Builds prompt to exact token count via `PromptFactory.build_prompt()`
    - Pre-counts actual tokens to avoid repeated computation
    - Initializes result storage and synchronization primitives
 
-2. **Warmup Phase** (`LoadTester.run`)
+2. **Warmup Phase** (`LoadTestRunner.run`)
    - Sends configurable warmup requests (default: 5)
    - Validates API connectivity before main test
    - Warmup results excluded from final metrics
 
-3. **Load Generation** (`LoadTester.worker`)
+3. **Load Generation** (`LoadTestRunner.worker`)
    - Spawns N concurrent workers (N = `--concurrency`)
    - Each worker sends requests continuously until `--duration-sec` expires
    - Semaphore controls max concurrent requests
    - Real-time progress logging every 10 requests
 
-4. **Request Execution** (`LoadTester.send_one`)
+4. **Request Execution** (`LoadTestRunner.send_one`)
    - **Streaming mode** (`--enable-stream`):
      - Captures TTFT by measuring time to first chunk via `resp.content.iter_any()`
      - Parses SSE stream for token usage data
@@ -47,7 +48,7 @@ GLM API Load Testing Suite - A comprehensive performance testing framework for L
    - Retry logic with exponential backoff for 408/429/5xx errors
    - Comprehensive error categorization (timeout, HTTP errors, connection errors)
 
-5. **Metrics Aggregation** (`LoadTester.summarize`)
+5. **Metrics Aggregation** (`LoadTestRunner.summarize`)
    - Calculates percentiles (P50, P90, P95, P99) for latency, TTFT, decode time
    - Computes TPM/TPS for input/output/total tokens
    - Generates error distribution and status code counts
@@ -86,7 +87,7 @@ GLM API Load Testing Suite - A comprehensive performance testing framework for L
 
 ### Single-Point Test
 ```bash
-python glm_tpm_test.py \
+python llm_load_test.py \
   --base-url https://api.example.com/v1 \
   --api-key $API_KEY \
   --model glm-5.1 \
@@ -99,7 +100,7 @@ python glm_tpm_test.py \
 ### Matrix Testing (Multiple Scenarios)
 Tests all combinations of input sizes × concurrency levels:
 ```bash
-python glm_tpm_test.py \
+python llm_load_test.py \
   --matrix-mode \
   --input-tokens-list 1000,10000,100000 \
   --concurrency-list 50,100,200 \
@@ -337,3 +338,4 @@ This project was created to address specific deficiencies in earlier load testin
 4. **Poor error visibility** - Errors not categorized or analyzed
 
 The implementation plan document (`压测脚本增强实施计划.md`) contains detailed requirements and design decisions.
+

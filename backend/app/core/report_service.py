@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from glm_tpm_test import RequestResult, _aggregate_by_time_window, _calculate_histogram
+from loadtest import RequestResult, _aggregate_by_time_window, _calculate_histogram
 
 
 def load_details(path: str | None, *, page: int = 1, page_size: int = 100) -> tuple[int, list[dict[str, Any]]]:

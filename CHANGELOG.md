@@ -14,48 +14,48 @@ This file tracks core optimization points and significant changes to the GLM loa
 
 ---
 
-## Current Implementation (glm_tpm_test.py)
+## Current Implementation (llm_load_test.py)
 
 ### Core Optimizations
 
 #### 1. Streaming TTFT Measurement
-**Location**: `LoadTester.send_one()` lines 192-228
+**Location**: `LoadTestRunner.send_one()` lines 192-228
 **Optimization**: Capture first chunk arrival time via `resp.content.iter_any()`
 **Impact**: Enables accurate prefill vs decode phase analysis, critical for identifying performance bottlenecks
 **Performance**: No overhead - streaming is the measurement mechanism itself
 
 #### 2. Pre-built Prompt Caching
-**Location**: `LoadTester.__init__()` lines 131-134
+**Location**: `LoadTestRunner.__init__()` lines 131-134
 **Optimization**: Build prompt once during initialization, reuse for all requests
 **Impact**: Eliminates repeated token counting overhead (CPU-intensive with tiktoken)
 **Performance**: Saves ~10-50ms per request depending on prompt size
 
 #### 3. Custom Percentile Calculation
-**Location**: `LoadTester.percentile()` lines 548-561
+**Location**: `LoadTestRunner.percentile()` lines 548-561
 **Optimization**: Linear interpolation without full sorting
 **Impact**: Efficient percentile calculation for large result sets
 **Performance**: O(n log n) vs O(n²) for naive approaches
 
 #### 4. Async I/O with Semaphore
-**Location**: `LoadTester.run()` and `LoadTester.worker()` lines 436-473
+**Location**: `LoadTestRunner.run()` and `LoadTestRunner.worker()` lines 436-473
 **Optimization**: Use asyncio with semaphore for concurrency control
 **Impact**: Efficient I/O-bound workload handling without thread overhead
 **Performance**: Supports 500+ concurrent requests on modest hardware
 
 #### 5. Minimal Logging in Hot Path
-**Location**: `LoadTester.worker()` lines 421-432
+**Location**: `LoadTestRunner.worker()` lines 421-432
 **Optimization**: Only log failures and every 10th request
 **Impact**: Reduces I/O overhead during high-concurrency tests
 **Performance**: Prevents logging from becoming a bottleneck at high QPS
 
 #### 6. SSE Stream Parsing
-**Location**: `LoadTester._parse_stream_usage()` lines 370-399
+**Location**: `LoadTestRunner._parse_stream_usage()` lines 370-399
 **Optimization**: Efficient line-by-line parsing of SSE format
 **Impact**: Extracts token usage from streaming responses without buffering entire response
 **Performance**: O(n) where n = response lines, minimal memory overhead
 
 #### 7. Exponential Backoff with Jitter
-**Location**: `LoadTester.backoff()` lines 402-405
+**Location**: `LoadTestRunner.backoff()` lines 402-405
 **Optimization**: Exponential backoff with random jitter for retries
 **Impact**: Prevents thundering herd when many requests fail simultaneously
 **Performance**: Improves overall success rate under rate limiting
@@ -80,13 +80,13 @@ This file tracks core optimization points and significant changes to the GLM loa
 ### Matrix Testing Features
 
 #### 1. Multi-Scenario Testing
-**Location**: `LoadTester.run_matrix()` lines 476-540
+**Location**: `LoadTestRunner.run_matrix()` lines 476-540
 **Feature**: Test multiple input sizes × concurrency levels in single run
 **Benefit**: Comprehensive capacity planning data, identifies inflection points
 **Usage**: `--matrix-mode --input-tokens-list 1000,10000,100000 --concurrency-list 50,100,200`
 
 #### 2. Cooldown Between Tests
-**Location**: `LoadTester.run_matrix()` line 530
+**Location**: `LoadTestRunner.run_matrix()` line 530
 **Feature**: 10-second cooldown between matrix test points
 **Benefit**: Prevents interference between tests, allows server state to stabilize
 **Impact**: More accurate measurements, especially for rate-limited APIs
@@ -128,3 +128,4 @@ This file tracks core optimization points and significant changes to the GLM loa
 3. **Batch Result Processing**: Process results in batches to reduce lock contention
 4. **Adaptive Concurrency**: Automatically adjust concurrency based on error rate
 5. **Real-time Dashboard**: WebSocket-based live monitoring during tests
+

@@ -7,15 +7,19 @@ from typing import Any
 
 import aiohttp
 
-from backend.app.core.protocol_utils import (
-    build_request_url,
+from loadtest.models import LEGACY_DEFAULT_ENDPOINTS
+from loadtest.protocols import (
+    build_headers,
+    build_payload,
+    build_url,
     default_endpoint,
+    extract_protocol_error,
+    extract_tokens,
     normalize_endpoint,
     replace_model_placeholders,
 )
 
 AUTH_FAILURE_STATUSES = {401, 403}
-LEGACY_DEFAULT_ENDPOINTS = {"/chat/completions", "/responses", "/messages"}
 
 
 @dataclass(frozen=True)
@@ -47,68 +51,33 @@ def _endpoint(payload: dict[str, Any]) -> str:
 
 
 def _url(payload: dict[str, Any]) -> str:
-    return build_request_url(
+    return build_url(
         str(payload["base_url"]),
         _endpoint(payload),
         _protocol(payload),
         model=payload.get("model") or "gemini-pro",
+        enable_stream=False,
     )
 
 
 def _headers(payload: dict[str, Any]) -> dict[str, str]:
-    protocol = _protocol(payload)
-    api_key = payload["api_key"]
-    if protocol == "anthropic":
-        return {
-            "x-api-key": api_key,
-            "anthropic-version": payload.get("anthropic_version") or "2023-06-01",
-            "Content-Type": "application/json",
-        }
-    if protocol == "gemini":
-        return {
-            "x-goog-api-key": api_key,
-            "Content-Type": "application/json",
-        }
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    return build_headers(
+        _protocol(payload),
+        api_key=payload["api_key"],
+        anthropic_version=payload.get("anthropic_version") or "2023-06-01",
+    )
 
 
 def _body(payload: dict[str, Any]) -> dict[str, Any]:
-    protocol = _protocol(payload)
-    model = payload.get("model") or ""
-    if protocol == "anthropic":
-        return {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 16,
-            "temperature": 0,
-            "stream": False,
-        }
-    if protocol == "gemini":
-        return {
-            "contents": [{"parts": [{"text": "ping"}]}],
-            "generationConfig": {
-                "maxOutputTokens": 16,
-                "temperature": 0,
-            },
-        }
-    if str(payload.get("endpoint") or "").endswith("/responses"):
-        return {
-            "model": model,
-            "input": "ping",
-            "max_output_tokens": 16,
-            "temperature": 0,
-            "stream": False,
-        }
-    return {
-        "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 16,
-        "temperature": 0,
-        "stream": False,
-    }
+    return build_payload(
+        _protocol(payload),
+        endpoint=_endpoint(payload),
+        model=payload.get("model") or "",
+        prompt="ping",
+        max_output_tokens=16,
+        temperature=0,
+        enable_stream=False,
+    )
 
 
 def _extract_error_message(text: str) -> str:
@@ -126,14 +95,7 @@ def _json_body(text: str) -> Any:
 
 
 def _extract_protocol_error(data: Any) -> str | None:
-    if not isinstance(data, dict):
-        return None
-    error = data.get("error")
-    if isinstance(error, dict):
-        return str(error.get("message") or error.get("type") or error.get("code") or "响应包含 error 字段")
-    if error:
-        return str(error)
-    return None
+    return extract_protocol_error(data)
 
 
 def _as_text(value: Any) -> str:
@@ -147,13 +109,8 @@ def _usage_output_tokens(data: Any) -> int:
         return 0
     usage = data.get("usage") or data.get("usageMetadata") or {}
     if isinstance(usage, dict):
-        for key in ("output_tokens", "completion_tokens", "candidatesTokenCount"):
-            try:
-                value = int(usage.get(key) or 0)
-            except (TypeError, ValueError):
-                value = 0
-            if value > 0:
-                return value
+        output_tokens, _total_tokens = extract_tokens(usage)
+        return output_tokens
     return 0
 
 
