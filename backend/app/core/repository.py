@@ -203,6 +203,31 @@ class Repository:
                 db.expunge(row)
             return list(reversed(rows))
 
+    def list_active_tasks(self) -> list[TestTask]:
+        with self.session() as db:
+            stmt = select(TestTask).where(TestTask.status.in_(["queued", "running", "stopping"]))
+            rows = list(db.execute(stmt).scalars())
+            for row in rows:
+                db.expunge(row)
+            return rows
+
+    def mark_tasks_interrupted(self, task_ids: list[str]) -> int:
+        if not task_ids:
+            return 0
+        now = datetime.utcnow()
+        updated = 0
+        with self.session() as db:
+            stmt = select(TestTask).where(
+                TestTask.id.in_(task_ids),
+                TestTask.status.in_(["queued", "running", "stopping"]),
+            )
+            for task in db.execute(stmt).scalars():
+                task.status = "interrupted"
+                task.completed_at = now
+                updated += 1
+            db.commit()
+        return updated
+
     def mark_unfinished_interrupted(self) -> None:
         with self.session() as db:
             stmt = select(TestTask).where(TestTask.status.in_(["queued", "running", "stopping"]))

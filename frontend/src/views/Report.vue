@@ -59,6 +59,15 @@
           :closable="false"
         />
         <el-alert
+          v-if="hasInvalidResponse"
+          class="report-alert"
+          title="响应格式异常"
+          description="本次结果中存在 HTTP 2xx 但无法识别为模型输出的响应；请检查协议类型、Endpoint、接入域名或代理网关返回内容。"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+        <el-alert
           v-if="!config.enable_stream"
           class="report-alert"
           title="非流式模式下 TTFT / Decode 无法准确测量"
@@ -424,6 +433,7 @@ const resultErrorCounts = computed(() => {
   return merged
 })
 const hasAuthFailure = computed(() => Number(resultErrorCounts.value.HTTP_401 || 0) > 0 || Number(resultErrorCounts.value.HTTP_403 || 0) > 0)
+const hasInvalidResponse = computed(() => Number(resultErrorCounts.value.INVALID_RESPONSE || 0) > 0)
 const stableMatrixPoints = computed(() => matrixPoints.value.filter((item) => (
   Number(item.success_rate || 0) >= 0.99 && Number(item.latency_p95 || 0) > 0
 )))
@@ -437,6 +447,14 @@ const capacityRecommendation = computed(() => {
       label: '认证失败',
       title: '当前结果不能作为容量参考',
       description: '本次测试存在 401/403，先修正 API Key、权限或接入域名，再重新测试。',
+      type: 'danger'
+    }
+  }
+  if (hasInvalidResponse.value) {
+    return {
+      label: '响应异常',
+      title: '当前结果不能作为容量参考',
+      description: '本次测试存在 HTTP 2xx 但响应格式异常的记录，先修正协议、Endpoint 或网关返回内容后再重新测试。',
       type: 'danger'
     }
   }

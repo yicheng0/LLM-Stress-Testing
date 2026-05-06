@@ -16,6 +16,15 @@
       show-icon
       :closable="false"
     />
+    <el-alert
+      v-if="hasInvalidResponse"
+      class="run-alert"
+      title="响应格式异常"
+      description="当前任务检测到 HTTP 2xx 但响应不是可识别的模型输出，请检查接入域名、Endpoint、协议类型或网关返回内容。"
+      type="error"
+      show-icon
+      :closable="false"
+    />
 
     <MetricCards :items="metricItems" />
     <div v-if="hasExpectedMetrics" class="section">
@@ -121,6 +130,7 @@ const finalErrorCounts = computed(() => {
   return merged
 })
 const hasAuthFailure = computed(() => Number(finalErrorCounts.value.HTTP_401 || 0) > 0 || Number(finalErrorCounts.value.HTTP_403 || 0) > 0)
+const hasInvalidResponse = computed(() => Number(finalErrorCounts.value.INVALID_RESPONSE || 0) > 0)
 
 const metricItems = computed(() => [
   {

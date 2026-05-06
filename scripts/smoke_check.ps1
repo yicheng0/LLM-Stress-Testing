@@ -69,7 +69,7 @@ try {
 
 if (-not $SkipFrontend) {
     try {
-        $response = Invoke-WebRequest -Uri $FrontendUrl -Method Get -TimeoutSec 5
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $FrontendUrl -Method Get -TimeoutSec 5
         if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 400) {
             Fail "Frontend returned HTTP $($response.StatusCode)"
         }

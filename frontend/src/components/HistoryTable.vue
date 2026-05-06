@@ -88,6 +88,7 @@ function statusType(status) {
 
 function healthStatusText(row) {
   if (hasAuthError(row)) return '认证失败'
+  if (hasInvalidResponse(row)) return '响应异常'
   const results = summaryResults(row)
   if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
     return '异常完成'
@@ -97,6 +98,7 @@ function healthStatusText(row) {
 
 function healthStatusType(row) {
   if (hasAuthError(row)) return 'danger'
+  if (hasInvalidResponse(row)) return 'danger'
   const results = summaryResults(row)
   if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
     return 'warning'
@@ -107,6 +109,11 @@ function healthStatusType(row) {
 function hasAuthError(row) {
   const errorCounts = summaryResults(row).error_counts || {}
   return Number(errorCounts.HTTP_401 || 0) > 0 || Number(errorCounts.HTTP_403 || 0) > 0
+}
+
+function hasInvalidResponse(row) {
+  const errorCounts = summaryResults(row).error_counts || {}
+  return Number(errorCounts.INVALID_RESPONSE || 0) > 0
 }
 
 function summaryResults(row) {
