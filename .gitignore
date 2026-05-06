@@ -7,6 +7,11 @@ __pycache__/
 *.err.log
 *.out.log
 
+# Local environment overrides
+.env
+.env.*
+!.env.example
+
 # Local IDE and agent state
 .idea/
 .claude/

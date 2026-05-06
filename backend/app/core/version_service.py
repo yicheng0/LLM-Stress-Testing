@@ -26,6 +26,12 @@ SAFE_WORKTREE_DIR_PREFIXES = (
     "results/",
     "data/",
 )
+SAFE_WORKTREE_FILE_NAMES = (
+    ".env",
+)
+SAFE_WORKTREE_FILE_PREFIXES = (
+    ".env.",
+)
 SAFE_WORKTREE_FILE_SUFFIXES = (".log", ".err.log", ".out.log", ".pyc", ".pyo")
 
 
@@ -125,6 +131,10 @@ def _is_safe_worktree_path(path: str) -> bool:
     if not normalized:
         return False
     if normalized.startswith(SAFE_WORKTREE_DIR_PREFIXES):
+        return True
+    if normalized in SAFE_WORKTREE_FILE_NAMES:
+        return True
+    if normalized != ".env.example" and normalized.startswith(SAFE_WORKTREE_FILE_PREFIXES):
         return True
     if normalized.endswith(SAFE_WORKTREE_FILE_SUFFIXES):
         return True
