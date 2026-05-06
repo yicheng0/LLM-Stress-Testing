@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
+from backend.app.core.task_status import ACTIVE_TASK_STATUSES, TaskStatus, normalize_task_status
 from backend.app.models.database import SessionLocal, TestEvent, TestResult, TestTask
 from backend.app.models.schemas import TestCreate
 
@@ -64,7 +65,7 @@ class Repository:
             base_url=payload.base_url,
             endpoint=payload.endpoint,
             model=payload.model,
-            status="queued",
+            status=TaskStatus.QUEUED.value,
             concurrency=payload.concurrency,
             duration_sec=payload.duration_sec,
             input_tokens=payload.input_tokens,
@@ -150,7 +151,7 @@ class Repository:
             task = db.get(TestTask, task_id)
             if not task:
                 return
-            task.status = status
+            task.status = normalize_task_status(status)
             if started_at is not None:
                 task.started_at = started_at
             if completed_at is not None:
@@ -205,7 +206,7 @@ class Repository:
 
     def list_active_tasks(self) -> list[TestTask]:
         with self.session() as db:
-            stmt = select(TestTask).where(TestTask.status.in_(["queued", "running", "stopping"]))
+            stmt = select(TestTask).where(TestTask.status.in_(ACTIVE_TASK_STATUSES))
             rows = list(db.execute(stmt).scalars())
             for row in rows:
                 db.expunge(row)
@@ -219,10 +220,10 @@ class Repository:
         with self.session() as db:
             stmt = select(TestTask).where(
                 TestTask.id.in_(task_ids),
-                TestTask.status.in_(["queued", "running", "stopping"]),
+                TestTask.status.in_(ACTIVE_TASK_STATUSES),
             )
             for task in db.execute(stmt).scalars():
-                task.status = "interrupted"
+                task.status = TaskStatus.INTERRUPTED.value
                 task.completed_at = now
                 updated += 1
             db.commit()
@@ -230,9 +231,9 @@ class Repository:
 
     def mark_unfinished_interrupted(self) -> None:
         with self.session() as db:
-            stmt = select(TestTask).where(TestTask.status.in_(["queued", "running", "stopping"]))
+            stmt = select(TestTask).where(TestTask.status.in_(ACTIVE_TASK_STATUSES))
             for task in db.execute(stmt).scalars():
-                task.status = "interrupted"
+                task.status = TaskStatus.INTERRUPTED.value
                 task.completed_at = datetime.utcnow()
             db.commit()
 

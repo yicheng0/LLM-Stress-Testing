@@ -14,12 +14,13 @@ from .reports import (
 )
 from .runner import LoadTestRunner
 from .streaming import SseStreamParser
-from .summary import MetricsSummaryBuilder
+from .summary import MetricsAccumulator, MetricsSummaryBuilder
 
 __all__ = [
     "LoadTestConfig",
     "LoadTestRunner",
     "MetricsSummaryBuilder",
+    "MetricsAccumulator",
     "PROTOCOL_SPECS",
     "PromptFactory",
     "ProtocolSpec",

@@ -17,7 +17,7 @@ from .models import RequestResult
 from .prompt import PromptFactory, TokenEstimator
 from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_tokens, protocol_spec
 from .streaming import SseStreamParser
-from .summary import MetricsSummaryBuilder
+from .summary import MetricsAccumulator
 
 ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
@@ -45,6 +45,7 @@ class LoadTestRunner:
         self.stream_parser = SseStreamParser()
         self.executor = self._create_executor()
         self.results: List[RequestResult] = []
+        self.metrics_accumulator = MetricsAccumulator()
         self.stop_at = 0.0
         self.request_counter = 0
         self.counter_lock = asyncio.Lock()
@@ -82,6 +83,7 @@ class LoadTestRunner:
 
     def _record_result(self, result: RequestResult) -> None:
         self.results.append(result)
+        self.metrics_accumulator.record(result)
         if result.ok:
             self._success_count += 1
             self._success_token_count += result.total_tokens
@@ -310,6 +312,7 @@ class LoadTestRunner:
                 print(f"[*] Prompt 构建完成，实际 token 数: {self.actual_input_tokens}", flush=True)
                 self._refresh_executor()
                 self.results = []
+                self.metrics_accumulator.reset()
                 self.request_counter = 0
                 self._success_count = 0
                 self._failure_count = 0
@@ -341,8 +344,8 @@ class LoadTestRunner:
         return results_matrix
 
     def summarize(self) -> Dict[str, Any]:
-        return MetricsSummaryBuilder(self.config).build(
-            self.results,
+        return self.metrics_accumulator.build_summary(
+            self.config,
             actual_input_tokens=self.actual_input_tokens,
             started_at=self.test_start_wall_time,
         )

@@ -127,6 +127,8 @@ class VersionInfoOut(BaseModel):
     behind_count: int | None = None
     dirty: bool | None = None
     dirty_paths: list[str] | None = None
+    runtime_dirty_count: int = 0
+    runtime_dirty_paths: list[str] | None = None
     update_available: bool = False
     message: str | None = None
     checked_at: datetime | None = None

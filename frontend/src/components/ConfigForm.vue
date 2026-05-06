@@ -1413,7 +1413,9 @@ function reset() {
 
 .mode-section {
   border-color: #bfdbfe;
-  background: #f8fbff;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(255, 255, 255, 0.96)),
+    #f8fbff;
 }
 
 .mode-grid {
@@ -1428,13 +1430,26 @@ function reset() {
   min-height: 76px;
   padding: 13px;
   border: 1px solid #d8e0ec;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.mode-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.09);
+  transform: translateY(-2px);
 }
 
 .mode-card.active {
   border-color: #2563eb;
-  box-shadow: 0 0 0 1px #2563eb inset;
+  box-shadow:
+    0 0 0 1px #2563eb inset,
+    0 16px 34px rgba(37, 99, 235, 0.16);
 }
 
 .mode-card strong {
@@ -1498,20 +1513,21 @@ function reset() {
   gap: 7px;
   padding: 13px;
   border: 1px solid #d8e0ec;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   color: #1e293b;
   text-align: left;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
-    transform 180ms ease;
+    transform 0.3s ease;
 }
 
 .preset-card:hover {
   border-color: #93b4e8;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.11);
+  transform: translateY(-2px);
 }
 
 .preset-card:focus-visible {
@@ -1521,8 +1537,11 @@ function reset() {
 
 .preset-card.active {
   border-color: #2563eb;
-  background: #f8fbff;
-  box-shadow: 0 0 0 1px #2563eb inset;
+  background:
+    linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
+  box-shadow:
+    0 0 0 1px #2563eb inset,
+    0 18px 36px rgba(37, 99, 235, 0.16);
 }
 
 .preset-title {
@@ -1580,7 +1599,7 @@ function reset() {
   gap: 12px;
   padding: 14px;
   border: 1px solid #bfdbfe;
-  border-radius: 8px;
+  border-radius: 12px;
   background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
 }
 
@@ -1624,7 +1643,7 @@ function reset() {
   min-width: 0;
   padding: 10px;
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 8px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -1654,7 +1673,7 @@ function reset() {
   margin-top: 12px;
   padding: 14px 16px;
   border: 1px solid #dfe7f2;
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(10px);
@@ -1675,8 +1694,19 @@ function reset() {
   min-height: 92px;
   padding: 14px;
   border: 1px solid #dfe7f2;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.estimate-cards > div:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.09);
+  transform: translateY(-2px);
 }
 
 .estimate-cards span,
@@ -1710,7 +1740,7 @@ function reset() {
   padding: 14px;
   border: 1px solid #dbeafe;
   border-left: 3px solid #2563eb;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -1750,7 +1780,7 @@ function reset() {
   gap: 12px;
   padding: 14px;
   border: 1px solid #bfdbfe;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #f8fbff;
 }
 
@@ -1793,20 +1823,21 @@ function reset() {
   gap: 6px;
   padding: 12px;
   border: 1px solid #d8e0ec;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   color: #1e293b;
   text-align: left;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
-    transform 180ms ease;
+    transform 0.3s ease;
 }
 
 .target-preset:hover:not(:disabled) {
   border-color: #93b4e8;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.11);
+  transform: translateY(-2px);
 }
 
 .target-preset:focus-visible {
@@ -1817,7 +1848,9 @@ function reset() {
 .target-preset.active {
   border-color: #2563eb;
   background: #ffffff;
-  box-shadow: 0 0 0 1px #2563eb inset;
+  box-shadow:
+    0 0 0 1px #2563eb inset,
+    0 16px 32px rgba(37, 99, 235, 0.15);
 }
 
 .target-preset:disabled {
@@ -1858,7 +1891,7 @@ function reset() {
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid #dbeafe;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -1878,7 +1911,7 @@ function reset() {
   min-height: 86px;
   padding: 12px;
   border: 1px solid #dfe7f2;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -1912,7 +1945,7 @@ function reset() {
   min-width: 0;
   padding: 12px;
   border: 1px solid #dfe7f2;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -1985,14 +2018,15 @@ function reset() {
   min-height: 116px;
   padding: 14px;
   border: 1px solid #d8e0ec;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   color: #1e293b;
   text-align: left;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
-    transform 180ms ease;
+    transform 0.3s ease;
 }
 
 .provider-check {
@@ -2007,12 +2041,13 @@ function reset() {
   background: #2563eb;
   color: #ffffff;
   font-size: 14px;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
 }
 
 .provider-card:hover {
   border-color: #93b4e8;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.11);
+  transform: translateY(-2px);
 }
 
 .provider-card:focus-visible {
@@ -2022,8 +2057,13 @@ function reset() {
 
 .provider-card.active {
   border-color: #2563eb;
-  background: #f8fbff;
-  box-shadow: 0 0 0 1px #2563eb inset, 0 12px 28px rgba(37, 99, 235, 0.12);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(59, 130, 246, 0.18), transparent 11rem),
+    linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
+  box-shadow:
+    0 0 0 1px #2563eb inset,
+    0 0 0 4px rgba(37, 99, 235, 0.08),
+    0 18px 38px rgba(37, 99, 235, 0.18);
 }
 
 .provider-icon {
@@ -2031,15 +2071,16 @@ function reset() {
   place-items: center;
   width: 42px;
   height: 42px;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #eff6ff;
   color: #2563eb;
   font-size: 20px;
 }
 
 .provider-card.active .provider-icon {
-  background: #2563eb;
+  background: linear-gradient(135deg, #60a5fa, #2563eb);
   color: #ffffff;
+  box-shadow: 0 12px 22px rgba(37, 99, 235, 0.24);
 }
 
 .provider-copy {
@@ -2095,7 +2136,7 @@ function reset() {
   min-height: 40px;
   padding: 10px 12px;
   border: 1px dashed #93b4e8;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #f8fbff;
   color: #64748b;
 }
@@ -2104,7 +2145,7 @@ function reset() {
   margin-top: -2px;
   padding: 9px 12px;
   border: 1px solid #dbeafe;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 12px;
@@ -2128,7 +2169,7 @@ function reset() {
   min-width: 0;
   padding: 14px;
   border: 1px solid #dfe7f2;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 

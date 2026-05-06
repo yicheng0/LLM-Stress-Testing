@@ -1,5 +1,5 @@
 <template>
-  <div v-loading="loading">
+  <div>
     <div class="section">
       <div class="section-header">
         <h2 class="section-title">测试对比</h2>
@@ -9,7 +9,15 @@
         </div>
       </div>
       <div class="section-body">
-        <el-empty v-if="!ids.length" description="请选择 2-4 条历史记录进行对比" />
+        <SkeletonLoader v-if="loading" variant="report" />
+        <EmptyState
+          v-else-if="!ids.length"
+          title="请选择历史记录进行对比"
+          description="从历史记录中勾选 2-4 条测试后，可以对比吞吐、延迟、成功率和容量结论。"
+          action-label="返回历史"
+          :action-icon="Clock"
+          @action="router.push('/history')"
+        />
         <el-alert
           v-else-if="ids.length < 2 || ids.length > 4"
           title="对比数量不符合要求"
@@ -104,6 +112,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Clock } from '@element-plus/icons-vue'
+import EmptyState from '../components/EmptyState.vue'
+import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { getReport } from '../api/client'
 
 const route = useRoute()

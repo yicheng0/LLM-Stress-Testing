@@ -69,7 +69,16 @@
           {{ expiredCount ? `${expiredCount} 条已过期` : '当前无过期数据' }}
         </el-tag>
       </div>
+      <SkeletonLoader v-if="store.loading && !store.items.length" />
+      <EmptyState
+        v-else-if="!store.items.length"
+        title="还没有压测记录"
+        description="新建一次测试后，这里会显示历史记录、报告导出和多测试对比入口。"
+        action-label="新建测试"
+        @action="router.push('/tests/new')"
+      />
       <HistoryTable
+        v-else
         :items="store.items"
         :loading="store.loading"
         @run="row => router.push(`/tests/${row.id}/run`)"
@@ -78,7 +87,7 @@
         @delete="confirmDelete"
         @selection-change="handleSelectionChange"
       />
-      <div class="pagination-row">
+      <div v-if="store.items.length" class="pagination-row">
         <el-pagination
           v-model:current-page="store.page"
           v-model:page-size="store.pageSize"
@@ -97,13 +106,17 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, DataAnalysis, Delete, Download, RefreshLeft, Search } from '@element-plus/icons-vue'
+import EmptyState from '../components/EmptyState.vue'
 import HistoryTable from '../components/HistoryTable.vue'
-import { deleteTest, deleteTests, downloadUrl } from '../api/client'
+import SkeletonLoader from '../components/SkeletonLoader.vue'
+import { deleteTest, deleteTests } from '../api/client'
+import { useHistoryFilters } from '../composables/useHistoryFilters'
+import { openReportDownload } from '../composables/useReportDownload'
 import { useTestsStore } from '../stores/tests'
 
 const router = useRouter()
 const store = useTestsStore()
-const createdRange = ref([])
+const { createdRange, reload, syncDateRange, resetFilters } = useHistoryFilters(store)
 const selectedRows = ref([])
 const bulkDeleting = ref(false)
 const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4)
@@ -122,27 +135,6 @@ const retentionSummary = computed(() => {
   }
   return '报告、明细和事件仅用于测试诊断；需要删除时请勾选记录后点击“删除选中”。'
 })
-
-function reload() {
-  store.page = 1
-  store.fetchHistory()
-}
-
-function syncDateRange(value) {
-  const [from, to] = value || []
-  store.filters.created_from = from ? `${from}T00:00:00` : ''
-  store.filters.created_to = to ? `${to}T23:59:59` : ''
-}
-
-function resetFilters() {
-  store.filters.model = ''
-  store.filters.status = ''
-  store.filters.api_protocol = ''
-  store.filters.created_from = ''
-  store.filters.created_to = ''
-  createdRange.value = []
-  reload()
-}
 
 async function confirmDelete(row) {
   try {
@@ -239,16 +231,7 @@ function exportSelectedReport(kind) {
     return
   }
   const row = selectedRows.value[0]
-  if (kind === 'pdf') {
-    const url = router.resolve({
-      name: 'test-report-print',
-      params: { id: row.id },
-      query: { autoprint: '1' }
-    }).href
-    window.open(url, '_blank')
-    return
-  }
-  window.open(downloadUrl(row.id, kind), '_blank')
+  openReportDownload(router, row.id, kind)
 }
 
 function isExpired(row) {

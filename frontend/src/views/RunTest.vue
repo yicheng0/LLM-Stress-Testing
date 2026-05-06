@@ -83,6 +83,7 @@ import MetricCards from '../components/MetricCards.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
 import RunDiagnostics from '../components/RunDiagnostics.vue'
 import { createProgressSocket, getReport, getTest, stopTest } from '../api/client'
+import { useRealtimeSocket } from '../composables/useRealtimeSocket'
 
 const props = defineProps({
   id: {
@@ -98,15 +99,27 @@ const status = ref('queued')
 const logs = ref([])
 const loading = ref(false)
 const stopping = ref(false)
-const socketStatus = ref('connecting')
 const lastUpdatedAt = ref(null)
 const finalSummary = ref(null)
 const finalSummaryLoading = ref(false)
-let socket
 let pollTimer
-let pingTimer
 let finalSummaryLoaded = false
 let finalizing = false
+const { socketStatus, connect: connectLiveSocket, markEnded: markSocketEnded } = useRealtimeSocket({
+  createSocket: createProgressSocket,
+  getStatus: () => status.value,
+  isTerminalStatus,
+  onProgress: (data) => {
+    progress.value = data
+    markUpdated()
+  },
+  onStatus: handleStatusUpdate,
+  onLog: (data) => {
+    logs.value = [...logs.value.slice(-49), data]
+    markUpdated()
+  },
+  onFallback: () => ElMessage.warning('实时连接异常，已启用状态轮询')
+})
 
 const progressWithDuration = computed(() => ({
   ...(progress.value || {}),
@@ -244,43 +257,7 @@ function applyTaskSnapshot(data) {
 }
 
 function connectSocket() {
-  if (isTerminalStatus(status.value)) {
-    socketStatus.value = 'ended'
-    return
-  }
-  socketStatus.value = 'connecting'
-  socket = createProgressSocket(props.id)
-  socket.onopen = () => {
-    if (!isTerminalStatus(status.value)) socketStatus.value = 'connected'
-  }
-  socket.onmessage = (event) => {
-    const message = JSON.parse(event.data)
-    if (message.type === 'progress') {
-      progress.value = message.data
-      markUpdated()
-    }
-    if (message.type === 'status') {
-      handleStatusUpdate(message.data.status)
-    }
-    if (message.type === 'log') {
-      logs.value = [...logs.value.slice(-49), message.data]
-      markUpdated()
-    }
-  }
-  socket.onerror = () => {
-    if (!isTerminalStatus(status.value)) {
-      socketStatus.value = 'polling'
-      ElMessage.warning('实时连接异常，已启用状态轮询')
-    }
-  }
-  socket.onclose = () => {
-    socketStatus.value = isTerminalStatus(status.value) ? 'ended' : 'polling'
-  }
-  pingTimer = window.setInterval(() => {
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send('ping')
-    }
-  }, 20000)
+  connectLiveSocket(props.id)
 }
 
 function startPolling() {
@@ -393,9 +370,8 @@ function sleep(ms) {
 async function finalizeRun() {
   if (finalizing) return
   finalizing = true
-  socketStatus.value = 'ended'
+  markSocketEnded()
   window.clearInterval(pollTimer)
-  socket?.close()
   try {
     await loadFinalSummary()
     await refreshFinalTask()
@@ -464,9 +440,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  socket?.close()
   window.clearInterval(pollTimer)
-  window.clearInterval(pingTimer)
 })
 </script>
 

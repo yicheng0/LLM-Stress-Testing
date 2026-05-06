@@ -15,6 +15,7 @@ __pycache__/
 # Local IDE and agent state
 .idea/
 .claude/
+.playwright-cli/
 
 # Frontend runtime/build artifacts
 frontend/node_modules/

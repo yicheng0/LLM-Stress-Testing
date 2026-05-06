@@ -9,6 +9,7 @@ from backend.app.config import settings
 from backend.app.core.progress import ProgressHub
 from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
+from backend.app.core.task_status import TaskStatus, stopped_final_status
 from backend.app.core.test_runner import WebLoadTestRunner
 from backend.app.models.schemas import TestCreate
 
@@ -96,9 +97,9 @@ class TaskManager:
         if not stop_event:
             return False
         stop_event.set()
-        self.repository.update_task_status(task_id, "stopping")
+        self.repository.update_task_status(task_id, TaskStatus.STOPPING.value)
         self.repository.add_event(task_id, "warning", "用户请求停止任务")
-        await self.progress_hub.publish_status(task_id, "stopping")
+        await self.progress_hub.publish_status(task_id, TaskStatus.STOPPING.value)
         await self.progress_hub.publish_log(task_id, "warning", "用户请求停止任务")
         return True
 
@@ -111,9 +112,9 @@ class TaskManager:
             await self.progress_hub.publish_log(task_id, level, message)
 
         try:
-            self.repository.update_task_status(task_id, "running", started_at=datetime.utcnow())
+            self.repository.update_task_status(task_id, TaskStatus.RUNNING.value, started_at=datetime.utcnow())
             self.repository.add_event(task_id, "info", "任务开始运行")
-            await self.progress_hub.publish_status(task_id, "running")
+            await self.progress_hub.publish_status(task_id, TaskStatus.RUNNING.value)
 
             runner = WebLoadTestRunner(
                 task_id,
@@ -137,16 +138,16 @@ class TaskManager:
                 error_message=self._final_error_message(result.get("summary")) if final_status == "failed" else None,
             )
             if stop_event.is_set():
-                final_status = "cancelled"
+                final_status = stopped_final_status(True, final_status)
             self.repository.update_task_status(task_id, final_status, completed_at=datetime.utcnow())
             self.repository.add_event(task_id, "info", f"任务已{final_status}")
             await self.progress_hub.publish_status(task_id, final_status)
         except Exception as exc:
             message = str(exc)
             self.repository.save_result(task_id, error_message=message)
-            self.repository.update_task_status(task_id, "failed", completed_at=datetime.utcnow())
+            self.repository.update_task_status(task_id, TaskStatus.FAILED.value, completed_at=datetime.utcnow())
             self.repository.add_event(task_id, "error", message)
-            await self.progress_hub.publish_status(task_id, "failed")
+            await self.progress_hub.publish_status(task_id, TaskStatus.FAILED.value)
             await self.progress_hub.publish_log(task_id, "error", message)
         finally:
             self.stop_events.pop(task_id, None)
@@ -186,8 +187,8 @@ class TaskManager:
         total_requests = int(results.get("total_requests") or 0)
         successful_requests = int(results.get("successful_requests") or 0)
         if total_requests > 0 and successful_requests == 0:
-            return "failed"
-        return "completed"
+            return TaskStatus.FAILED.value
+        return TaskStatus.COMPLETED.value
 
     @classmethod
     def _final_error_message(cls, summary: dict[str, Any] | None) -> str | None:

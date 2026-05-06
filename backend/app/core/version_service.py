@@ -51,6 +51,8 @@ class VersionSnapshot:
     message: str | None
     dirty_paths: list[str] | None
     checked_at: datetime
+    runtime_dirty_count: int = 0
+    runtime_dirty_paths: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -200,6 +202,8 @@ def get_version_snapshot(*, fetch: bool = False) -> VersionSnapshot:
             update_available=False,
             message="当前环境未检测到 Git 仓库，无法在线检查更新。",
             dirty_paths=None,
+            runtime_dirty_count=0,
+            runtime_dirty_paths=None,
             checked_at=checked_at,
         )
 
@@ -270,12 +274,12 @@ def get_version_snapshot(*, fetch: bool = False) -> VersionSnapshot:
         message = f"工作区存在未提交的源码或配置修改，无法自动更新：{_format_paths(protected_paths)}"
     elif update_available:
         if ignored_paths:
-            message = f"检测到远端有新版本。当前存在 {len(ignored_paths)} 个运行产物变更，已忽略，不影响在线更新。"
+            message = f"检测到远端有新版本。当前存在 {len(ignored_paths)} 个本地运行产物变更，已忽略，不影响在线更新。"
         else:
             message = "检测到远端有新版本。"
     elif message is None:
         if ignored_paths:
-            message = f"当前已是最新版本。当前存在 {len(ignored_paths)} 个运行产物变更，已忽略。"
+            message = f"当前已是最新版本。当前存在 {len(ignored_paths)} 个本地运行产物变更，已忽略。"
         else:
             message = "当前已是最新版本。"
 
@@ -299,6 +303,8 @@ def get_version_snapshot(*, fetch: bool = False) -> VersionSnapshot:
         update_available=update_available,
         message=message,
         dirty_paths=dirty_paths,
+        runtime_dirty_count=len(ignored_paths),
+        runtime_dirty_paths=ignored_paths[:10] or None,
         checked_at=checked_at,
     )
 

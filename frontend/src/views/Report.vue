@@ -1,5 +1,7 @@
 <template>
-  <div v-loading="loading">
+  <div>
+    <SkeletonLoader v-if="loading && !report" variant="report" />
+    <template v-else>
     <div class="section">
       <div class="section-header">
         <h2 class="section-title">报告概览</h2>
@@ -369,6 +371,7 @@
         </el-timeline>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -380,7 +383,9 @@ import { ArrowDown, CopyDocument, Delete, Download, Monitor, Refresh } from '@el
 import ChartPanel from '../components/ChartPanel.vue'
 import MetricCards from '../components/MetricCards.vue'
 import MetricsTable from '../components/MetricsTable.vue'
-import { deleteTest, downloadUrl, getDetails, getReport } from '../api/client'
+import SkeletonLoader from '../components/SkeletonLoader.vue'
+import { deleteTest, getDetails, getReport } from '../api/client'
+import { openReportDownload } from '../composables/useReportDownload'
 
 const props = defineProps({
   id: {
@@ -1153,16 +1158,7 @@ function expectationType(value) {
 }
 
 function openDownload(kind) {
-  if (kind === 'pdf') {
-    const url = router.resolve({
-      name: 'test-report-print',
-      params: { id: props.id },
-      query: { autoprint: '1' }
-    }).href
-    window.open(url, '_blank')
-    return
-  }
-  window.open(downloadUrl(props.id, kind), '_blank')
+  openReportDownload(router, props.id, kind)
 }
 
 function hasFile(kind) {
