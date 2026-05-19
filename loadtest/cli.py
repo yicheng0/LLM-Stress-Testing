@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from .config import LoadTestConfig
-from .result_writer import ReportArtifactWriter
+from .result_writer import ReportArtifactWriter, StreamingResultCollector
 from .runner import LoadTestRunner
 
 
@@ -57,7 +57,12 @@ async def async_main() -> int:
     config = LoadTestConfig.from_namespace(args)
     out_dir = ensure_output_dir(config.output_dir)
     writer = ReportArtifactWriter(out_dir)
-    tester = LoadTestRunner(config)
+    collector = None if config.matrix_mode else StreamingResultCollector(out_dir)
+    tester = LoadTestRunner(
+        config,
+        result_callback=collector.record if collector else None,
+        retain_results=config.matrix_mode,
+    )
     if config.matrix_mode:
         if not config.input_tokens_list or not config.concurrency_list:
             print("错误：矩阵模式需要指定 --input-tokens-list 和 --concurrency-list", file=sys.stderr)
@@ -73,7 +78,10 @@ async def async_main() -> int:
         return 0
 
     summary = await tester.run()
-    files = writer.write_single(summary, tester.results)
+    if collector is None:
+        files = writer.write_single(summary, tester.results)
+    else:
+        files = writer.write_single_from_collector(summary, collector)
     print(json.dumps({
         "summary_file": files["summary_path"],
         "details_file": files["details_jsonl_path"],

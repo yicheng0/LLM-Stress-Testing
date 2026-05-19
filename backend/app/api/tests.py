@@ -96,6 +96,58 @@ def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
     return summary.get("results") or {}
 
 
+def _dashboard_task_item(
+    task: TestTask,
+    result: TestResult | None,
+    progress_hub: ProgressHub,
+    active_statuses: set[str],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, float | None], bool]:
+    config = _config(task)
+    expected_metrics = config.get("expected_metrics") or {}
+    targets = _expected_targets(expected_metrics)
+    protocol = task.api_protocol or config.get("api_protocol", "openai")
+    summary_results = _summary_results(_safe_load_summary(result))
+    is_active = task.status in active_statuses
+    progress = progress_hub.snapshot(task.id) if is_active else None
+    if progress:
+        item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
+        item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
+        item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
+        item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
+    else:
+        item_rpm = _num(summary_results.get("rpm"))
+        item_tpm = _num(summary_results.get("total_tpm"))
+        item_success_rate = summary_results.get("success_rate")
+        item_p95 = summary_results.get("latency_sec_p95")
+    metric_item = {
+        "rpm": item_rpm,
+        "tpm": item_tpm,
+        "success_rate": item_success_rate,
+        "latency_p95": item_p95,
+    }
+    error_message = result.error_message if result else None
+    task_item = {
+        "id": task.id,
+        "name": task.name,
+        "status": task.status,
+        "api_protocol": protocol,
+        "model": task.model,
+        "concurrency": task.concurrency,
+        "duration_sec": task.duration_sec,
+        "created_at": task.created_at,
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+        "rpm": item_rpm,
+        "tpm": item_tpm,
+        "success_rate": item_success_rate,
+        "latency_p95": item_p95,
+        "expected_metrics": expected_metrics,
+        "error_message": error_message,
+        "issue_tags": _task_issue_tags(task.status, metric_item, targets, error_message),
+    }
+    return task_item, metric_item, targets, is_active
+
+
 def _expected_targets(expected_metrics: dict[str, Any] | None) -> dict[str, float | None]:
     expected_metrics = expected_metrics or {}
     return {
@@ -331,76 +383,28 @@ async def realtime_dashboard(
     manager: TaskManager = Depends(get_task_manager),
 ) -> dict[str, Any]:
     manager.reconcile_active_tasks()
-    total, rows = repository.list_tasks(1, 100)
-    status_counts: dict[str, int] = {}
+    snapshot = repository.dashboard_snapshot(recent_limit=8)
+    total = snapshot["total"]
+    status_counts: dict[str, int] = snapshot["status_counts"]
     protocol_counts = {"openai": 0, "anthropic": 0, "gemini": 0}
-    model_counts: dict[str, int] = {}
-    error_counts: dict[str, int] = {}
+    protocol_counts.update(snapshot["protocol_counts"])
+    model_counts: dict[str, int] = snapshot["model_counts"]
+    error_counts: dict[str, int] = snapshot["error_counts"]
     active_statuses = {"queued", "running", "stopping"}
-    active_tasks = 0
+    active_tasks = sum(status_counts.get(status, 0) for status in active_statuses)
     metric_sources: list[dict[str, Any]] = []
     target_sources: list[dict[str, float | None]] = []
     recent_tasks = []
 
-    for task, result in rows:
-        status_counts[task.status] = status_counts.get(task.status, 0) + 1
-        config = _config(task)
-        expected_metrics = config.get("expected_metrics") or {}
-        targets = _expected_targets(expected_metrics)
-        protocol = task.api_protocol or config.get("api_protocol", "openai")
-        protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
-        model_counts[task.model] = model_counts.get(task.model, 0) + 1
-        if result and result.error_message:
-            error_type = result.error_message.split(":", 1)[0][:80] or "unknown"
-            error_counts[error_type] = error_counts.get(error_type, 0) + 1
-
-        summary = _safe_load_summary(result)
-        summary_results = _summary_results(summary)
-        is_active = task.status in active_statuses
-        if is_active:
-            active_tasks += 1
-
-        progress = progress_hub.snapshot(task.id) if is_active else None
-        if progress:
-            item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
-            item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
-            item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
-            item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
-        else:
-            item_rpm = _num(summary_results.get("rpm"))
-            item_tpm = _num(summary_results.get("total_tpm"))
-            item_success_rate = summary_results.get("success_rate")
-            item_p95 = summary_results.get("latency_sec_p95")
-        metric_item = {
-            "rpm": item_rpm,
-            "tpm": item_tpm,
-            "success_rate": item_success_rate,
-            "latency_p95": item_p95,
-        }
-        error_message = result.error_message if result else None
+    for task, result in snapshot["active_rows"]:
+        _, metric_item, targets, is_active = _dashboard_task_item(task, result, progress_hub, active_statuses)
         if is_active:
             metric_sources.append(metric_item)
             target_sources.append(targets)
 
-        recent_tasks.append({
-            "id": task.id,
-            "name": task.name,
-            "status": task.status,
-            "api_protocol": protocol,
-            "model": task.model,
-            "concurrency": task.concurrency,
-            "duration_sec": task.duration_sec,
-            "created_at": task.created_at,
-            "started_at": task.started_at,
-            "completed_at": task.completed_at,
-            "rpm": item_rpm,
-            "tpm": item_tpm,
-            "success_rate": item_success_rate,
-            "latency_p95": item_p95,
-            "expected_metrics": expected_metrics,
-            "error_message": error_message,
-            "issue_tags": _task_issue_tags(task.status, metric_item, targets, error_message),
-        })
+    for task, result in snapshot["recent_rows"]:
+        task_item, _, _, _ = _dashboard_task_item(task, result, progress_hub, active_statuses)
+        recent_tasks.append(task_item)
 
     sources = metric_sources
     rpm = sum(_num(item.get("rpm")) for item in sources)
@@ -441,8 +445,8 @@ async def realtime_dashboard(
         },
         "status_counts": status_counts,
         "protocol_counts": protocol_counts,
-        "model_counts": dict(sorted(model_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
-        "error_counts": dict(sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
+        "model_counts": model_counts,
+        "error_counts": error_counts,
         "diagnostics": _dashboard_diagnostics(
             total=total,
             active_tasks=active_tasks,
@@ -525,7 +529,11 @@ async def get_report(task_id: str, repository: Repository = Depends(get_reposito
     task, result = item
     config = json.loads(task.config_json)
     summary = _summary(result)
-    charts = build_chart_data(summary, result.details_jsonl_path if result else None)
+    charts = build_chart_data(
+        summary,
+        result.details_jsonl_path if result else None,
+        charts_path=result.charts_path if result else None,
+    )
     files = {
         "summary": result.summary_path if result else None,
         "details": result.details_jsonl_path if result else None,
@@ -558,7 +566,12 @@ async def get_details(
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
     _, result = item
-    total, items = load_details(result.details_jsonl_path if result else None, page=page, page_size=page_size)
+    total, items = load_details(
+        result.details_jsonl_path if result else None,
+        page=page,
+        page_size=page_size,
+        total_count=result.detail_count if result else None,
+    )
     return DetailsOut(total=total, page=page, page_size=page_size, items=items)
 
 

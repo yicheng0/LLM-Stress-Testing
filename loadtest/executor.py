@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from email.utils import parsedate_to_datetime
 import json
 import time
-from typing import Callable, Optional
+from datetime import datetime, timezone
+from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
@@ -13,6 +15,7 @@ from .protocols import build_headers, build_payload, build_url, extract_protocol
 from .streaming import SseStreamParser
 
 BackoffFactory = Callable[[int], float]
+RetrySleep = Callable[[float], Awaitable[bool]]
 
 
 class RequestExecutor:
@@ -24,12 +27,54 @@ class RequestExecutor:
         actual_input_tokens: int,
         backoff: BackoffFactory,
         stream_parser: SseStreamParser | None = None,
+        retry_sleep: RetrySleep | None = None,
     ):
         self.config = config
         self.prompt = prompt
         self.actual_input_tokens = actual_input_tokens
         self.backoff = backoff
+        self.retry_sleep = retry_sleep or self._default_retry_sleep
         self.stream_parser = stream_parser or SseStreamParser()
+        self._url = self.build_url()
+        self._headers = self.build_headers()
+        self._payload = self.build_payload()
+
+    @staticmethod
+    async def _default_retry_sleep(seconds: float) -> bool:
+        if seconds > 0:
+            await asyncio.sleep(seconds)
+        return True
+
+    def _retry_delay(self, attempt: int, retry_after: str | None = None) -> float:
+        delay = self.backoff(attempt)
+        if not retry_after:
+            return delay
+        parsed_delay = self._parse_retry_after(retry_after)
+        if parsed_delay is None:
+            return delay
+        return min(max(0.0, parsed_delay), self.config.retry_backoff_max)
+
+    @staticmethod
+    def _parse_retry_after(value: str) -> float | None:
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (parsed - datetime.now(timezone.utc)).total_seconds()
+
+    async def _sleep_before_retry(self, attempt: int, retry_after: str | None = None) -> None:
+        completed = await self.retry_sleep(self._retry_delay(attempt, retry_after))
+        if not completed:
+            raise asyncio.CancelledError
 
     def build_payload(self) -> dict:
         return build_payload(
@@ -91,16 +136,13 @@ class RequestExecutor:
         )
 
     async def send_one(self, session: aiohttp.ClientSession, request_id: int) -> RequestResult:
-        url = self.build_url()
-        headers = self.build_headers()
-        payload = self.build_payload()
         attempt = 0
         started_at = time.time()
         while True:
             attempt += 1
             t0 = time.perf_counter()
             try:
-                async with session.post(url, headers=headers, json=payload, timeout=self.config.timeout_sec) as resp:
+                async with session.post(self._url, headers=self._headers, json=self._payload, timeout=self.config.timeout_sec) as resp:
                     if 200 <= resp.status < 300:
                         if self.config.enable_stream:
                             try:
@@ -180,7 +222,7 @@ class RequestExecutor:
                     text = await resp.text()
                     retryable = resp.status in {408, 409, 429, 500, 502, 503, 504}
                     if retryable and attempt <= self.config.max_retries:
-                        await asyncio.sleep(self.backoff(attempt))
+                        await self._sleep_before_retry(attempt, resp.headers.get("Retry-After"))
                         continue
                     return self.create_result(
                         request_id,
@@ -196,12 +238,12 @@ class RequestExecutor:
                     )
             except asyncio.TimeoutError as exc:
                 if attempt <= self.config.max_retries:
-                    await asyncio.sleep(self.backoff(attempt))
+                    await self._sleep_before_retry(attempt)
                     continue
                 return self.create_result(request_id, started_at, t0, False, 0, output_tokens=0, total_tokens=self.actual_input_tokens, error_type="TIMEOUT", error_message=str(exc), attempt=attempt)
             except aiohttp.ClientError as exc:
                 if attempt <= self.config.max_retries:
-                    await asyncio.sleep(self.backoff(attempt))
+                    await self._sleep_before_retry(attempt)
                     continue
                 return self.create_result(request_id, started_at, t0, False, 0, output_tokens=0, total_tokens=self.actual_input_tokens, error_type="CLIENT_ERROR", error_message=str(exc), attempt=attempt)
             except Exception as exc:

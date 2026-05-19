@@ -38,10 +38,13 @@ Open `http://127.0.0.1:5173`. In development, Vite proxies `/api` and `/ws` to `
 
 Copy `.env.example` to `.env` for local overrides. The current backend reads:
 
-- `DATABASE_URL`: default `sqlite:///./data/llm_test.db`
+- `DATABASE_URL`: default `postgresql+psycopg://llm_test:llm_test@postgres:5432/llm_test`
 - `RESULTS_DIR`: default `./results`
 - `MAX_RUNNING_TESTS`: default `2`
 - `MAX_CONCURRENCY_PER_TEST`: default `500`
+- `RESULT_RETENTION_HOURS`: default `24`
+- `CLEANUP_ON_STARTUP`: default `true`
+- `CLEANUP_INTERVAL_MINUTES`: default `60`
 
 The frontend can use:
 
@@ -53,13 +56,13 @@ The backend can use:
 - `SELF_UPDATE_ENABLED`: enable the version check/update panel action
 - `SELF_UPDATE_COMMAND`: optional custom update command when using the panel button
 
-API keys are submitted per test run. The backend removes `api_key` before persisting task configuration to SQLite and reports; do not put real keys in `.env.example`, docs, logs, or committed result files.
+API keys are submitted per test run. The backend removes `api_key` before persisting task configuration to the database and reports; do not put real keys in `.env.example`, docs, logs, or committed result files.
 
 ## State And Retention
 
-The web console uses SQLite as a lightweight local state store at `data/llm_test.db` by default. It stores task metadata, status, events, summaries, and file paths. Report artifacts are written under `results/`, with web-console runs grouped by task id.
+The web console uses PostgreSQL as the default state store in deployment. It stores task metadata, status, events, summaries, and file paths. Report artifacts are written under `results/`, with web-console runs grouped by task id.
 
-Results are intended for short-term local review by default. Use the UI delete action to remove a task and its task-specific result directory, or clean old local artifacts after exporting what you need. Before sharing reports, remove sensitive request/response payloads and endpoint details.
+Results are intended for short-term local review by default. Use the UI delete action to remove a task and its task-specific result directory, or let the cleanup job remove old local artifacts automatically. Before sharing reports, remove sensitive request/response payloads and endpoint details.
 
 ## Smoke Check
 

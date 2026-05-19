@@ -157,7 +157,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
 import {
   CircleCheck,
   DataAnalysis,
@@ -170,6 +169,7 @@ import {
   Warning
 } from '@element-plus/icons-vue'
 import { getRealtimeDashboard } from '../api/client'
+import { loadEcharts } from '../utils/echarts'
 
 const router = useRouter()
 const loading = ref(false)
@@ -194,6 +194,7 @@ let timer
 let trendChart
 let statusChart
 let protocolChart
+let chartFrame = 0
 
 const activeStatuses = ['queued', 'running', 'stopping']
 const activeTasks = computed(() => items.value.filter((item) => activeStatuses.includes(item.status)))
@@ -353,7 +354,9 @@ function pushSample() {
   ]
 }
 
-function renderCharts() {
+async function renderCharts() {
+  if (!trendEl.value || !statusEl.value || !protocolEl.value) return
+  const echarts = await loadEcharts()
   if (!trendEl.value || !statusEl.value || !protocolEl.value) return
   trendChart ||= echarts.init(trendEl.value)
   statusChart ||= echarts.init(statusEl.value)
@@ -442,6 +445,14 @@ function countBy(list, key) {
     acc[value] = (acc[value] || 0) + 1
     return acc
   }, {})
+}
+
+function scheduleRenderCharts() {
+  if (chartFrame) return
+  chartFrame = window.requestAnimationFrame(() => {
+    chartFrame = 0
+    renderCharts()
+  })
 }
 
 function resizeCharts() {
@@ -597,13 +608,13 @@ function seconds(value) {
 }
 
 watch([items, samples], () => {
-  nextTick(renderCharts)
+  nextTick(scheduleRenderCharts)
 }, { deep: true })
 
 onMounted(async () => {
   await loadData()
   await nextTick()
-  renderCharts()
+  scheduleRenderCharts()
   window.addEventListener('resize', resizeCharts)
   timer = window.setInterval(loadData, 3000)
 })
@@ -611,6 +622,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearInterval(timer)
   window.removeEventListener('resize', resizeCharts)
+  if (chartFrame) window.cancelAnimationFrame(chartFrame)
   trendChart?.dispose()
   statusChart?.dispose()
   protocolChart?.dispose()

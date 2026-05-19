@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from loadtest import LoadTestRunner
 from loadtest.config import LoadTestConfig
-from loadtest.result_writer import ReportArtifactWriter
+from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 
 ProgressCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
@@ -66,12 +66,15 @@ class WebLoadTestRunner:
         args.output_dir = str(task_dir)
         config = LoadTestConfig.from_namespace(args)
         writer = ReportArtifactWriter(task_dir)
+        collector = None if config.matrix_mode else StreamingResultCollector(task_dir)
 
         tester = LoadTestRunner(
             config,
             progress_callback=self.progress_callback,
             stop_event=self.stop_event,
             log_callback=self.log_callback,
+            result_callback=collector.record if collector else None,
+            retain_results=config.matrix_mode,
         )
 
         if config.matrix_mode:
@@ -90,7 +93,10 @@ class WebLoadTestRunner:
             }
 
         summary = await tester.run()
-        files = writer.write_single(summary, tester.results)
+        if collector is None:
+            files = writer.write_single(summary, tester.results)
+        else:
+            files = writer.write_single_from_collector(summary, collector)
 
         return {
             "summary": summary,

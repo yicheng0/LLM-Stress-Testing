@@ -4,10 +4,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from loadtest import RequestResult, _aggregate_by_time_window, _calculate_histogram
+from loadtest import RequestResult, build_matrix_chart_data, build_single_chart_data
 
 
-def load_details(path: str | None, *, page: int = 1, page_size: int = 100) -> tuple[int, list[dict[str, Any]]]:
+def load_details(
+    path: str | None,
+    *,
+    page: int = 1,
+    page_size: int = 100,
+    total_count: int | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
     if not path or not Path(path).exists():
         return 0, []
 
@@ -25,6 +31,8 @@ def load_details(path: str | None, *, page: int = 1, page_size: int = 100) -> tu
             if start <= total < end:
                 items.append(json.loads(line))
             total += 1
+            if total_count is not None and total >= end:
+                return total_count, items
     return total, items
 
 
@@ -42,81 +50,24 @@ def load_request_results(path: str | None) -> list[RequestResult]:
     return results
 
 
-def build_chart_data(summary: dict[str, Any] | None, details_path: str | None) -> dict[str, Any]:
+def load_chart_cache(path: str | None) -> dict[str, Any] | None:
+    if not path or not Path(path).exists():
+        return None
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_chart_data(
+    summary: dict[str, Any] | None,
+    details_path: str | None,
+    *,
+    charts_path: str | None = None,
+) -> dict[str, Any]:
+    cached = load_chart_cache(charts_path)
+    if cached is not None:
+        return cached
     if summary and summary.get("matrix"):
         return build_matrix_chart_data(summary.get("results_matrix") or [])
-
-    details = load_request_results(details_path)
-    success = [item for item in details if item.ok]
-    failed = [item for item in details if not item.ok]
-
-    latencies = [item.latency_sec for item in success]
-    ttfts = [item.ttft_sec for item in success if item.ttft_sec is not None]
-    decode_times = [
-        item.latency_sec - item.ttft_sec
-        for item in success
-        if item.ttft_sec is not None
-    ]
-
-    timeseries = _aggregate_by_time_window(details, window_sec=2.0)
-    first_ts = min((item.started_at for item in success), default=0.0)
-    normalized_timeseries = [
-        {
-            "time_sec": round(bucket["timestamp"] - first_ts, 2),
-            "qps": round(bucket["qps"], 4),
-            "tpm": round(bucket["tpm"], 2),
-            "avg_ttft": round(bucket["avg_ttft"], 4) if bucket["avg_ttft"] is not None else None,
-        }
-        for bucket in timeseries
-    ]
-
-    error_counts: dict[str, int] = {}
-    status_counts: dict[str, int] = {}
-    for item in details:
-        status_counts[str(item.status)] = status_counts.get(str(item.status), 0) + 1
-        if not item.ok:
-            key = item.error_type or "UNKNOWN"
-            error_counts[key] = error_counts.get(key, 0) + 1
-
-    return {
-        "latency_histogram": _calculate_histogram(latencies, bins=30),
-        "ttft_histogram": _calculate_histogram(ttfts, bins=30),
-        "decode_histogram": _calculate_histogram(decode_times, bins=30),
-        "timeseries": normalized_timeseries,
-        "error_counts": error_counts,
-        "status_counts": status_counts,
-        "detail_count": len(details),
-        "success_count": len(success),
-        "failed_count": len(failed),
-    }
-
-
-def build_matrix_chart_data(results_matrix: list[dict[str, Any]]) -> dict[str, Any]:
-    points = []
-    for item in results_matrix:
-        cfg = item.get("matrix_config") or item.get("config") or {}
-        res = item.get("results") or {}
-        points.append({
-            "input_tokens": cfg.get("input_tokens") or item.get("config", {}).get("input_tokens_target"),
-            "concurrency": cfg.get("concurrency") or item.get("config", {}).get("concurrency"),
-            "rpm": res.get("rpm"),
-            "qps": res.get("qps"),
-            "total_tpm": res.get("total_tpm"),
-            "total_tps": res.get("total_tps"),
-            "success_rate": res.get("success_rate"),
-            "latency_avg": res.get("latency_sec_avg"),
-            "latency_p50": res.get("latency_sec_p50"),
-            "latency_p95": res.get("latency_sec_p95"),
-            "latency_p99": res.get("latency_sec_p99"),
-            "ttft_avg": res.get("ttft_sec_avg"),
-            "ttft_p50": res.get("ttft_sec_p50"),
-            "ttft_p95": res.get("ttft_sec_p95"),
-            "ttft_p99": res.get("ttft_sec_p99"),
-        })
-
-    return {
-        "matrix_points": points,
-        "detail_count": 0,
-        "success_count": 0,
-        "failed_count": 0,
-    }
+    return build_single_chart_data(load_request_results(details_path))

@@ -183,8 +183,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back, Printer } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
 import { getReport } from '../api/client'
+import { loadEcharts } from '../utils/echarts'
 
 const props = defineProps({
   id: {
@@ -245,7 +245,7 @@ async function loadReport() {
   try {
     report.value = await getReport(props.id)
     await nextTick()
-    renderCharts()
+    await renderCharts()
     if (route.query.autoprint === '1') {
       window.setTimeout(printReport, 650)
     }
@@ -256,18 +256,22 @@ async function loadReport() {
   }
 }
 
-function renderCharts() {
+async function renderCharts() {
   if (isMatrix.value) {
-    renderChart('matrixHeatmap', matrixHeatmapEl.value, matrixHeatmapOption())
+    await renderChart('matrixHeatmap', matrixHeatmapEl.value, matrixHeatmapOption())
     return
   }
-  renderChart('timeseries', timeseriesEl.value, timeseriesOption())
-  renderChart('latencyHistogram', latencyHistogramEl.value, histogramOption(charts.value.latency_histogram, 'Latency', '#2563eb'))
-  renderChart('ttftDecode', ttftDecodeEl.value, ttftDecodeOption())
-  renderChart('error', errorEl.value, errorOption())
+  await Promise.all([
+    renderChart('timeseries', timeseriesEl.value, timeseriesOption()),
+    renderChart('latencyHistogram', latencyHistogramEl.value, histogramOption(charts.value.latency_histogram, 'Latency', '#2563eb')),
+    renderChart('ttftDecode', ttftDecodeEl.value, ttftDecodeOption()),
+    renderChart('error', errorEl.value, errorOption())
+  ])
 }
 
-function renderChart(key, element, option) {
+async function renderChart(key, element, option) {
+  if (!element) return
+  const echarts = await loadEcharts()
   if (!element) return
   let chart = chartMap.get(key)
   if (!chart) {

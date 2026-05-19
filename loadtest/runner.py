@@ -22,6 +22,7 @@ from .summary import MetricsAccumulator
 
 ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
+ResultCallback = Callable[[RequestResult], None]
 T = TypeVar("T")
 
 
@@ -32,17 +33,21 @@ class LoadTestRunner:
         progress_callback: Optional[ProgressCallback] = None,
         stop_event: Optional[asyncio.Event] = None,
         log_callback: Optional[LogCallback] = None,
+        result_callback: Optional[ResultCallback] = None,
+        retain_results: bool = True,
     ):
         self.config = LoadTestConfig.coerce(args)
         self.args = self.config
         self.progress_callback = progress_callback
         self.stop_event = stop_event
         self.log_callback = log_callback
+        self.result_callback = result_callback
+        self.retain_results = retain_results
         self.estimator = TokenEstimator(self.config.model)
         self.prompt_factory = PromptFactory(self.estimator)
         print(f"[*] 正在构建 {self.config.input_tokens} token 输入 prompt...", flush=True)
-        self.prompt = self.prompt_factory.build_prompt(self.config.input_tokens)
-        self.actual_input_tokens = self.estimator.count(self.prompt)
+        self._prompt_cache: dict[int, tuple[str, int]] = {}
+        self.prompt, self.actual_input_tokens = self._prompt_for_tokens(self.config.input_tokens)
         print(f"[*] Prompt 构建完成，实际 token 数: {self.actual_input_tokens}", flush=True)
         self.stream_parser = SseStreamParser()
         self.executor = self._create_executor()
@@ -59,6 +64,15 @@ class LoadTestRunner:
         self._success_token_count = 0
         self._success_latency_window: deque[float] = deque(maxlen=10)
 
+    def _prompt_for_tokens(self, input_tokens: int) -> tuple[str, int]:
+        cached = self._prompt_cache.get(input_tokens)
+        if cached:
+            return cached
+        prompt = self.prompt_factory.build_prompt(input_tokens)
+        actual_input_tokens = self.estimator.count(prompt)
+        self._prompt_cache[input_tokens] = (prompt, actual_input_tokens)
+        return prompt, actual_input_tokens
+
     def _create_executor(self) -> RequestExecutor:
         return RequestExecutor(
             self.config,
@@ -66,6 +80,7 @@ class LoadTestRunner:
             actual_input_tokens=self.actual_input_tokens,
             backoff=self.backoff,
             stream_parser=self.stream_parser,
+            retry_sleep=self._sleep_or_stop,
         )
 
     def _refresh_executor(self) -> None:
@@ -148,7 +163,10 @@ class LoadTestRunner:
             await self._maybe_await(self.log_callback(level, message))
 
     def _record_result(self, result: RequestResult) -> None:
-        self.results.append(result)
+        if self.retain_results:
+            self.results.append(result)
+        if self.result_callback:
+            self.result_callback(result)
         self.metrics_accumulator.record(result)
         if result.ok:
             self._success_count += 1
@@ -161,8 +179,8 @@ class LoadTestRunner:
         if not self.progress_callback:
             return
         now = time.time()
-        total = len(self.results)
-        if not force and total % 10 != 0 and now - self.last_progress_emit_at < 2:
+        total = self.metrics_accumulator.total_requests
+        if not force and total % 25 != 0 and now - self.last_progress_emit_at < 3:
             return
         start_time = self.test_start_wall_time or self.test_start_time
         elapsed = max(0.001, now - start_time) if start_time else 0.001
@@ -296,14 +314,14 @@ class LoadTestRunner:
                 await self.emit_progress()
                 elapsed_base = self.stop_at - self.config.duration_sec if self.stop_at else self.test_start_wall_time
                 elapsed = int(max(0.0, time.time() - elapsed_base))
-                total = len(self.results)
+                total = self.metrics_accumulator.total_requests
                 success = self._success_count
                 current_success_rate = success / total * 100 if total > 0 else 0
                 if not result.ok:
                     error_msg = result.error_message[:200] if result.error_message else "Unknown error"
                     print(f"  [{elapsed:>4}s] req#{result.request_id} FAIL({result.error_type}) status={result.status} latency={result.latency_sec:.2f}s msg={error_msg}", flush=True)
                     await self.emit_log("error", f"req#{result.request_id} FAIL({result.error_type}) status={result.status} latency={result.latency_sec:.2f}s msg={error_msg}")
-                if total % 10 == 0:
+                if total % 50 == 0:
                     avg_latency = statistics.mean(self._success_latency_window) if self._success_latency_window else 0
                     print(f"  [{elapsed:>4}s] 已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s", flush=True)
                     await self.emit_log("info", f"已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s")
@@ -381,8 +399,7 @@ class LoadTestRunner:
                 self.config.concurrency = concurrency
                 self.config.duration_sec = self.config.matrix_duration_sec
                 print(f"[*] 正在构建 {input_tokens} token 输入 prompt...", flush=True)
-                self.prompt = self.prompt_factory.build_prompt(input_tokens)
-                self.actual_input_tokens = self.estimator.count(self.prompt)
+                self.prompt, self.actual_input_tokens = self._prompt_for_tokens(input_tokens)
                 print(f"[*] Prompt 构建完成，实际 token 数: {self.actual_input_tokens}", flush=True)
                 self._refresh_executor()
                 self.results = []

@@ -1,21 +1,35 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-llm_test}
+      POSTGRES_USER: ${POSTGRES_USER:-llm_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llm_test}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    depends_on:
+      - postgres
     environment:
-      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/llm_test.db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://llm_test:llm_test@postgres:5432/llm_test}
       RESULTS_DIR: ${RESULTS_DIR:-./results}
       MAX_RUNNING_TESTS: ${MAX_RUNNING_TESTS:-2}
       MAX_CONCURRENCY_PER_TEST: ${MAX_CONCURRENCY_PER_TEST:-500}
       RESULT_RETENTION_HOURS: ${RESULT_RETENTION_HOURS:-24}
       CLEANUP_ON_STARTUP: ${CLEANUP_ON_STARTUP:-true}
+      CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-60}
       SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-true}
       SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-sh /app/scripts/docker-self-update.sh}
       SELF_UPDATE_TIMEOUT_SEC: ${SELF_UPDATE_TIMEOUT_SEC:-900}
     volumes:
       - .:/app
-      - ./data:/app/data
       - ./results:/app/results
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
@@ -31,3 +45,6 @@ services:
     ports:
       - "${WEB_PORT:-8080}:80"
     restart: unless-stopped
+
+volumes:
+  pgdata:

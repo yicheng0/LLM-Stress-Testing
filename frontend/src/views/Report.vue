@@ -319,10 +319,19 @@
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">请求明细</h2>
-          <el-button :icon="Refresh" :loading="detailsLoading" @click="loadDetails">刷新</el-button>
+          <el-button :icon="Refresh" :loading="detailsLoading" @click="loadDetails">
+            {{ detailsLoaded ? '刷新' : '加载明细' }}
+          </el-button>
         </div>
         <div class="section-body">
-          <el-table :data="details.items" v-loading="detailsLoading" border>
+          <EmptyState
+            v-if="!detailsLoaded && !detailsLoading"
+            title="请求明细按需加载"
+            description="报告摘要和图表已加载；需要逐条排查时再加载分页明细。"
+            action-label="加载明细"
+            @action="loadDetails"
+          />
+          <el-table v-else :data="details.items" v-loading="detailsLoading" border>
             <el-table-column prop="request_id" label="ID" width="80" />
             <el-table-column label="结果" width="90">
               <template #default="{ row }">
@@ -340,7 +349,7 @@
             <el-table-column prop="error_type" label="错误类型" min-width="130" />
             <el-table-column prop="error_message" label="错误信息" min-width="220" show-overflow-tooltip />
           </el-table>
-          <div class="pagination-row">
+          <div v-if="detailsLoaded" class="pagination-row">
             <el-pagination
               v-model:current-page="details.page"
               v-model:page-size="details.pageSize"
@@ -381,6 +390,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, CopyDocument, Delete, Download, Monitor, Refresh } from '@element-plus/icons-vue'
 import ChartPanel from '../components/ChartPanel.vue'
+import EmptyState from '../components/EmptyState.vue'
 import MetricCards from '../components/MetricCards.vue'
 import MetricsTable from '../components/MetricsTable.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
@@ -398,6 +408,7 @@ const router = useRouter()
 const report = ref(null)
 const loading = ref(false)
 const detailsLoading = ref(false)
+const detailsLoaded = ref(false)
 const details = reactive({
   total: 0,
   page: 1,
@@ -1046,9 +1057,6 @@ async function loadReport() {
   loading.value = true
   try {
     report.value = await getReport(props.id)
-    if (!report.value?.summary?.matrix) {
-      await loadDetails()
-    }
   } catch (error) {
     ElMessage.error(error.message)
   } finally {
@@ -1064,6 +1072,7 @@ async function loadDetails() {
     details.page = data.page
     details.pageSize = data.page_size
     details.items = data.items
+    detailsLoaded.value = true
   } catch (error) {
     ElMessage.error(error.message)
   } finally {

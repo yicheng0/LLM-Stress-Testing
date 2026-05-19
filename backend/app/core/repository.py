@@ -139,6 +139,78 @@ class Repository:
                 items.append((task, result))
             return total, items
 
+    def dashboard_snapshot(self, recent_limit: int = 8) -> dict[str, Any]:
+        recent_limit = min(max(1, recent_limit), 50)
+        with self.session() as db:
+            total = int(db.execute(select(func.count()).select_from(TestTask)).scalar_one())
+            status_counts = {
+                status: int(count)
+                for status, count in db.execute(
+                    select(TestTask.status, func.count())
+                    .group_by(TestTask.status)
+                ).all()
+            }
+            protocol_counts = {
+                protocol: int(count)
+                for protocol, count in db.execute(
+                    select(TestTask.api_protocol, func.count())
+                    .group_by(TestTask.api_protocol)
+                ).all()
+            }
+            model_counts = {
+                model: int(count)
+                for model, count in db.execute(
+                    select(TestTask.model, func.count())
+                    .group_by(TestTask.model)
+                    .order_by(func.count().desc())
+                    .limit(8)
+                ).all()
+            }
+
+            recent_rows = db.execute(
+                select(TestTask, TestResult)
+                .outerjoin(TestResult, TestTask.id == TestResult.task_id)
+                .order_by(TestTask.created_at.desc())
+                .limit(recent_limit)
+            ).all()
+            active_rows = db.execute(
+                select(TestTask, TestResult)
+                .outerjoin(TestResult, TestTask.id == TestResult.task_id)
+                .where(TestTask.status.in_(ACTIVE_TASK_STATUSES))
+            ).all()
+
+            error_counts: dict[str, int] = {}
+            error_rows = db.execute(
+                select(TestResult.error_message, func.count())
+                .where(TestResult.error_message.is_not(None))
+                .group_by(TestResult.error_message)
+                .order_by(func.count().desc())
+                .limit(20)
+            ).all()
+            for error_message, count in error_rows:
+                key = (error_message or "unknown").split(":", 1)[0][:80] or "unknown"
+                error_counts[key] = error_counts.get(key, 0) + int(count)
+
+            def detached(rows: list[tuple[TestTask, TestResult | None]]) -> list[tuple[TestTask, TestResult | None]]:
+                items: list[tuple[TestTask, TestResult | None]] = []
+                for task, result in rows:
+                    if task in db:
+                        db.expunge(task)
+                    if result and result in db:
+                        db.expunge(result)
+                    items.append((task, result))
+                return items
+
+            return {
+                "total": total,
+                "status_counts": status_counts,
+                "protocol_counts": protocol_counts,
+                "model_counts": model_counts,
+                "error_counts": dict(sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]),
+                "recent_rows": detached(recent_rows),
+                "active_rows": detached(active_rows),
+            }
+
     def update_task_status(
         self,
         task_id: str,
@@ -169,6 +241,8 @@ class Repository:
         report_md_path: str | None = None,
         report_html_path: str | None = None,
         matrix_csv_path: str | None = None,
+        charts_path: str | None = None,
+        detail_count: int | None = None,
     ) -> None:
         with self.session() as db:
             result = db.get(TestResult, task_id)
@@ -184,6 +258,9 @@ class Repository:
             result.report_md_path = report_md_path or result.report_md_path
             result.report_html_path = report_html_path or result.report_html_path
             result.matrix_csv_path = matrix_csv_path or result.matrix_csv_path
+            result.charts_path = charts_path or result.charts_path
+            if detail_count is not None:
+                result.detail_count = detail_count
             db.commit()
 
     def add_event(self, task_id: str, level: str, message: str) -> None:

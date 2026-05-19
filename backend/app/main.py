@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
+from contextlib import suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,19 @@ from backend.app.version import APP_VERSION
 repository = Repository()
 progress_hub = ProgressHub()
 task_manager = TaskManager(repository, progress_hub)
+cleanup_task: asyncio.Task | None = None
+
+
+async def _cleanup_loop() -> None:
+    interval = max(1, settings.cleanup_interval_minutes) * 60
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            repository.cleanup_expired_results()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            continue
 
 
 @asynccontextmanager
@@ -27,7 +42,14 @@ async def lifespan(app: FastAPI):
     repository.mark_unfinished_interrupted()
     if settings.cleanup_on_startup:
         repository.cleanup_expired_results()
+    global cleanup_task
+    cleanup_task = asyncio.create_task(_cleanup_loop())
     yield
+    if cleanup_task:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
+        cleanup_task = None
 
 
 app = FastAPI(title="LLM API 性能测试平台", version=APP_VERSION, lifespan=lifespan)

@@ -46,6 +46,8 @@ class TestResult(Base):
     report_md_path: Mapped[str | None] = mapped_column(String)
     report_html_path: Mapped[str | None] = mapped_column(String)
     matrix_csv_path: Mapped[str | None] = mapped_column(String)
+    charts_path: Mapped[str | None] = mapped_column(String)
+    detail_count: Mapped[int | None] = mapped_column(Integer)
 
 
 class TestEvent(Base):
@@ -60,31 +62,64 @@ class TestEvent(Base):
 
 engine = create_engine(
     settings.database_url,
+    pool_pre_ping=True,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+IS_SQLITE = settings.database_url.startswith("sqlite")
 
 
 def init_db() -> None:
-    if settings.database_url.startswith("sqlite:///"):
+    if IS_SQLITE:
         db_path = settings.database_url.replace("sqlite:///", "", 1)
         if db_path and not db_path.startswith(":memory:"):
             from pathlib import Path
 
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
-    _ensure_api_protocol_column()
+    _ensure_compat_columns()
 
 
-def _ensure_api_protocol_column() -> None:
-    if not settings.database_url.startswith("sqlite"):
-        return
-
+def _ensure_compat_columns() -> None:
     with engine.begin() as conn:
+        if not IS_SQLITE:
+            task_columns = {
+                row[0]
+                for row in conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'test_tasks'"
+                    )
+                ).all()
+            }
+            if "api_protocol" not in task_columns:
+                conn.execute(text("ALTER TABLE test_tasks ADD COLUMN api_protocol VARCHAR NOT NULL DEFAULT 'openai'"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_api_protocol ON test_tasks (api_protocol)"))
+
+            result_columns = {
+                row[0]
+                for row in conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'test_results'"
+                    )
+                ).all()
+            }
+            if "charts_path" not in result_columns:
+                conn.execute(text("ALTER TABLE test_results ADD COLUMN charts_path VARCHAR"))
+            if "detail_count" not in result_columns:
+                conn.execute(text("ALTER TABLE test_results ADD COLUMN detail_count INTEGER"))
+            return
+
         columns = [row[1] for row in conn.execute(text("PRAGMA table_info(test_tasks)")).fetchall()]
         if "api_protocol" not in columns:
             conn.execute(text("ALTER TABLE test_tasks ADD COLUMN api_protocol VARCHAR NOT NULL DEFAULT 'openai'"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_api_protocol ON test_tasks (api_protocol)"))
+        result_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(test_results)")).fetchall()]
+        if "charts_path" not in result_columns:
+            conn.execute(text("ALTER TABLE test_results ADD COLUMN charts_path VARCHAR"))
+        if "detail_count" not in result_columns:
+            conn.execute(text("ALTER TABLE test_results ADD COLUMN detail_count INTEGER"))
 
         rows = conn.execute(text("SELECT id, config_json, api_protocol FROM test_tasks")).fetchall()
         for task_id, config_json, current_protocol in rows:

@@ -48,7 +48,7 @@ class SseStreamParser:
         content: aiohttp.StreamReader,
         request_started_perf: float,
     ) -> tuple[Optional[float], int, int, Optional[str]]:
-        buffer = ""
+        buffer = bytearray()
         ttft = None
         output_tokens = 0
         total_tokens = 0
@@ -56,21 +56,26 @@ class SseStreamParser:
         async for chunk in content.iter_any():
             if ttft is None and chunk:
                 ttft = time.perf_counter() - request_started_perf
-            buffer += chunk.decode("utf-8", errors="ignore")
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                line = line.strip()
-                if not line.startswith("data: "):
+            if not chunk:
+                continue
+            buffer.extend(chunk)
+            while True:
+                line_end = buffer.find(b"\n")
+                if line_end < 0:
+                    break
+                line = bytes(buffer[:line_end]).strip()
+                del buffer[:line_end + 1]
+                if not line.startswith(b"data: "):
                     continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
+                data = line[6:]
+                if data == b"[DONE]":
                     continue
                 try:
-                    data = json.loads(data_str)
+                    data_obj = json.loads(data)
                 except Exception:
                     continue
-                protocol_error = extract_protocol_error(data) or protocol_error
-                usage = self.extract_usage(data)
+                protocol_error = extract_protocol_error(data_obj) or protocol_error
+                usage = self.extract_usage(data_obj)
                 if usage:
                     output_tokens, total_tokens = extract_tokens(usage)
         return ttft, output_tokens, total_tokens, protocol_error

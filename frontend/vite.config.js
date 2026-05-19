@@ -9,8 +9,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           vue: ['vue', 'vue-router', 'pinia'],
-          element: ['element-plus', '@element-plus/icons-vue'],
-          echarts: ['echarts']
+          element: ['element-plus', '@element-plus/icons-vue']
         }
       }
     }

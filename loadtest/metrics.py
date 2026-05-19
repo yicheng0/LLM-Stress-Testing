@@ -70,12 +70,12 @@ def _analyze_metric(
     return thresholds[-1][1] if thresholds else None
 
 
-def percentile(values: List[float], p: float) -> Optional[float]:
+def percentile(values: List[float], p: float, *, presorted: bool = False) -> Optional[float]:
     if not values:
         return None
     if len(values) == 1:
         return values[0]
-    values = sorted(values)
+    values = values if presorted else sorted(values)
     k = (len(values) - 1) * p
     f = math.floor(k)
     c = math.ceil(k)
@@ -95,12 +95,13 @@ def percentile_metrics(values: List[float], prefix: str) -> dict:
             f"{prefix}_p95": None,
             f"{prefix}_p99": None,
         }
+    sorted_values = sorted(values)
     return {
         f"{prefix}_avg": round(statistics.mean(values), 4),
-        f"{prefix}_p50": round(percentile(values, 0.50), 4),
-        f"{prefix}_p90": round(percentile(values, 0.90), 4),
-        f"{prefix}_p95": round(percentile(values, 0.95), 4),
-        f"{prefix}_p99": round(percentile(values, 0.99), 4),
+        f"{prefix}_p50": round(percentile(sorted_values, 0.50, presorted=True), 4),
+        f"{prefix}_p90": round(percentile(sorted_values, 0.90, presorted=True), 4),
+        f"{prefix}_p95": round(percentile(sorted_values, 0.95, presorted=True), 4),
+        f"{prefix}_p99": round(percentile(sorted_values, 0.99, presorted=True), 4),
     }
 
 

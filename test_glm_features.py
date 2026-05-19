@@ -12,6 +12,8 @@ from pathlib import Path
 
 import requests
 
+__test__ = False
+
 # ANSI colors
 GREEN  = "\033[92m"
 RED    = "\033[91m"
@@ -32,8 +34,17 @@ def info_line(msg):
     print(f"  {YELLOW}INFO{RESET} {msg}")
 
 
+def _chat_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1/chat/completions"):
+        return normalized
+    if normalized.endswith("/v1"):
+        normalized = normalized.removesuffix("/v1")
+    return normalized + "/v1/chat/completions"
+
+
 def chat(base_url, api_key, model, messages, **kwargs):
-    url = base_url.rstrip("/") + "/v1/chat/completions"
+    url = _chat_url(base_url)
     print(f"    → POST {url}")
     headers = {
         "Authorization": f"Bearer {api_key}",

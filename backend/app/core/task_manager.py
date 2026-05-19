@@ -135,6 +135,8 @@ class TaskManager:
                 report_md_path=files["report_md_path"],
                 report_html_path=files["report_html_path"],
                 matrix_csv_path=files["matrix_csv_path"],
+                charts_path=files["charts_path"],
+                detail_count=files.get("detail_count"),
                 error_message=self._final_error_message(result.get("summary")) if final_status == "failed" else None,
             )
             if stop_event.is_set():
