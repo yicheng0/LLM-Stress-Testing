@@ -90,6 +90,10 @@ button,
     0 10px 20px rgba(37, 99, 235, 0.12);
 }
 
+.brand-copy {
+  min-width: 0;
+}
+
 .brand-title {
   font-size: 14px;
   font-weight: 700;
@@ -304,23 +308,22 @@ button,
 }
 
 .section {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   border: 1px solid #dfe7f2;
-  border-radius: 12px;
+  border-radius: 10px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 251, 255, 0.94) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(248, 251, 255, 0.96) 100%),
     var(--app-panel);
-  box-shadow: var(--app-shadow);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
   overflow: hidden;
   transition:
     border-color var(--app-transition),
-    box-shadow var(--app-transition),
-    transform var(--app-transition);
+    box-shadow var(--app-transition);
 }
 
 .section:hover {
-  border-color: #cbd8ea;
-  box-shadow: var(--app-shadow-hover);
+  border-color: #cfdae8;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
 }
 
 .section-header {
@@ -329,17 +332,18 @@ button,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px;
+  min-height: 52px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--app-border);
   background:
-    linear-gradient(90deg, rgba(37, 99, 235, 0.045), rgba(255, 255, 255, 0.8)),
-    #fbfdff;
+    linear-gradient(90deg, rgba(37, 99, 235, 0.035), rgba(255, 255, 255, 0.78)),
+    #fcfdff;
 }
 
 .section-header::before {
   position: absolute;
-  top: 14px;
-  bottom: 14px;
+  top: 13px;
+  bottom: 13px;
   left: 0;
   width: 3px;
   border-radius: 0 3px 3px 0;
@@ -351,10 +355,11 @@ button,
   margin: 0;
   font-size: 16px;
   font-weight: 700;
+  line-height: 1.35;
 }
 
 .section-body {
-  padding: 18px;
+  padding: 16px;
 }
 
 .grid-2 {
@@ -595,7 +600,7 @@ button,
     padding: 0;
   }
 
-  .desktop-sidebar .brand > div:not(.brand-logo),
+  .desktop-sidebar .brand-copy,
   .desktop-sidebar .sidebar-info,
   .desktop-sidebar .el-menu-item span {
     display: none;
@@ -616,6 +621,7 @@ button,
   .section-header {
     align-items: stretch;
     flex-direction: column;
+    min-height: 0;
   }
 
   .toolbar {

@@ -54,15 +54,21 @@
       </div>
       <div class="section-body">
         <el-table :data="group.items" border>
-          <el-table-column prop="name" label="参数" min-width="150" />
-          <el-table-column prop="field" label="字段" min-width="170">
+          <el-table-column prop="name" label="参数" min-width="130" />
+          <el-table-column prop="field" label="字段" min-width="150">
             <template #default="{ row }">
               <code>{{ row.field }}</code>
             </template>
           </el-table-column>
-          <el-table-column prop="meaning" label="作用" min-width="260" />
-          <el-table-column prop="recommendation" label="建议" min-width="220" />
-          <el-table-column prop="note" label="注意事项" min-width="260" />
+          <el-table-column prop="meaning" label="作用" min-width="240" />
+          <el-table-column label="建议与提醒" min-width="320">
+            <template #default="{ row }">
+              <div class="table-stack">
+                <div class="table-stack-primary">{{ row.recommendation }}</div>
+                <div class="table-stack-secondary">{{ row.note }}</div>
+              </div>
+            </template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
@@ -323,24 +329,52 @@ const metrics = [
 
 <style scoped>
 .help-page {
-  max-width: 1480px;
+  display: grid;
+  width: 100%;
+  max-width: none;
+  gap: 14px;
+}
+
+.help-page .section {
+  margin-bottom: 0;
+}
+
+.help-page .section-header {
+  padding: 12px 16px;
+}
+
+.help-page .section-body {
+  padding: 14px 16px 16px;
+}
+
+.help-page .section-title {
+  font-size: 15px;
+}
+
+.help-page .section-header .muted {
+  max-width: 52ch;
+  text-align: right;
+  line-height: 1.45;
 }
 
 .intro-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 8px;
 }
 
 .beginner-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .beginner-card {
-  min-height: 132px;
-  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  padding: 11px;
   border: 1px solid #dbeafe;
   border-left: 3px solid #2563eb;
   border-radius: 8px;
@@ -358,19 +392,19 @@ const metrics = [
 
 .beginner-card strong {
   display: block;
-  margin: 8px 0 6px;
+  margin: 3px 0 0;
   color: #1e293b;
   font-size: 14px;
   line-height: 1.45;
 }
 
 .beginner-note {
-  margin-top: 14px;
+  margin-top: 8px;
 }
 
 .intro-grid > div,
 .metric-doc {
-  padding: 14px;
+  padding: 11px;
   border: 1px solid #dfe7f2;
   border-radius: 8px;
   background: #ffffff;
@@ -378,7 +412,7 @@ const metrics = [
 
 .intro-title,
 .metric-doc-name {
-  margin-bottom: 8px;
+  margin-bottom: 5px;
   color: #334155;
   font-weight: 800;
 }
@@ -392,7 +426,7 @@ const metrics = [
 .metric-doc-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .metric-doc-desc {
@@ -406,7 +440,7 @@ const metrics = [
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px;
+  padding: 15px;
   border: 1px solid #dbeafe;
   border-radius: 8px;
   background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 48%, #fff7ed 100%);
@@ -429,12 +463,43 @@ const metrics = [
   font-size: 13px;
 }
 
+.table-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.table-stack-primary {
+  color: #334155;
+  line-height: 1.45;
+}
+
+.table-stack-secondary {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 code {
   color: #1d4ed8;
   font-family: "Fira Code", Consolas, monospace;
 }
 
 @media (max-width: 1180px) {
+  .intro-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .help-page .section-header,
+  .help-page .section-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .help-page .section-header {
+    align-items: flex-start;
+  }
+
   .intro-grid,
   .beginner-grid,
   .metric-doc-grid {

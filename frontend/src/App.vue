@@ -4,7 +4,7 @@
     <el-aside class="sidebar desktop-sidebar" width="236px">
       <div class="brand">
         <img class="brand-logo" src="https://wenwen-us.oss-us-west-1.aliyuncs.com/apipro_logo.png" alt="APIPro" />
-        <div>
+        <div class="brand-copy">
           <div class="brand-title">APIPro LLM Benchmark Studio</div>
           <div class="brand-subtitle">Performance Intelligence Console</div>
         </div>
@@ -116,7 +116,7 @@
       <div class="sidebar mobile-sidebar">
         <div class="brand">
           <img class="brand-logo" src="https://wenwen-us.oss-us-west-1.aliyuncs.com/apipro_logo.png" alt="APIPro" />
-          <div>
+          <div class="brand-copy">
             <div class="brand-title">APIPro LLM Benchmark Studio</div>
             <div class="brand-subtitle">Performance Intelligence Console</div>
           </div>

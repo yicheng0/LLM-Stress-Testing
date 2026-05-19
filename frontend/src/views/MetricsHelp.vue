@@ -1,131 +1,161 @@
 <template>
   <div class="metrics-help">
-    <div class="section">
+    <aside class="metrics-index section">
       <div class="section-header">
-        <h2 class="section-title">指标科普</h2>
-        <el-tag effect="plain">给第一次压测的人看</el-tag>
+        <h2 class="section-title">指标索引</h2>
       </div>
       <div class="section-body">
-        <div class="hero-grid">
-          <div>
-            <span>核心关系</span>
-            <strong>并发不是 RPM</strong>
-            <p>并发是同一时间有多少请求在路上；RPM 是一分钟内真正完成了多少成功请求。</p>
-          </div>
-          <div>
-            <span>启动前预期</span>
-            <strong>先估算，再压测</strong>
-            <p>配置页会按假设单请求耗时估算 RPM、TPM、TPS，真实结果以运行报告为准。</p>
-          </div>
-          <div>
-            <span>看报告顺序</span>
-            <strong>成功率优先</strong>
-            <p>吞吐再高，如果成功率低或 P99 很差，也不能作为稳定容量基线。</p>
-          </div>
+        <div class="index-summary">
+          <strong>先判断稳定性，再判断吞吐。</strong>
+          <span>适合压测前快速校准预期，压测后按顺序读报告。</span>
         </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">常用指标怎么理解</h2>
-      </div>
-      <div class="section-body">
-        <el-table :data="metricRows" border>
-          <el-table-column prop="name" label="指标" width="130" />
-          <el-table-column prop="plain" label="小白理解" min-width="230" />
-          <el-table-column prop="formula" label="近似公式" min-width="250">
-            <template #default="{ row }">
-              <code>{{ row.formula }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="watch" label="主要看什么" min-width="260" />
-        </el-table>
-      </div>
-    </div>
-
-    <div class="grid-2">
-      <div class="section">
-        <div class="section-header">
-          <h2 class="section-title">并发、RPM、TPM 的关系</h2>
-        </div>
-        <div class="section-body">
-          <div class="formula-stack">
-            <div>
-              <span>请求吞吐</span>
-              <code>RPM ≈ 并发数 ÷ 单请求平均耗时 × 60</code>
-            </div>
-            <div>
-              <span>Token 吞吐</span>
-              <code>TPM ≈ RPM × 单请求总 Token</code>
-            </div>
-            <div>
-              <span>秒级 Token 吞吐</span>
-              <code>TPS = TPM ÷ 60</code>
-            </div>
-          </div>
-          <el-alert
-            class="formula-alert"
-            title="例子：500 并发不等于 500 RPM"
-            description="如果每个请求平均 10 秒完成，500 并发大约是 3,000 RPM；如果每个请求平均 60 秒完成，才接近 500 RPM。"
-            type="info"
-            show-icon
-            :closable="false"
-          />
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="section-header">
-          <h2 class="section-title">启动前估算器</h2>
-          <span class="muted">用于理解公式，不会发起测试</span>
-        </div>
-        <div class="section-body">
-          <div class="calculator-grid">
-            <el-form-item label="并发数">
-              <el-input-number v-model="demo.concurrency" :min="1" :max="5000" controls-position="right" />
-            </el-form-item>
-            <el-form-item label="单请求平均耗时">
-              <el-segmented v-model="demo.latencySec" :options="latencyOptions" />
-            </el-form-item>
-            <el-form-item label="输入 Token">
-              <el-input-number v-model="demo.inputTokens" :min="1" :step="1000" controls-position="right" />
-            </el-form-item>
-            <el-form-item label="最大输出 Token">
-              <el-input-number v-model="demo.outputTokens" :min="1" :step="128" controls-position="right" />
-            </el-form-item>
-          </div>
-          <div class="estimate-grid">
-            <div>
-              <span>预期 RPM</span>
-              <strong>{{ number(demoRpm) }}</strong>
-              <em>每分钟成功请求数</em>
-            </div>
-            <div>
-              <span>预期 TPM</span>
-              <strong>{{ number(demoTpm) }}</strong>
-              <em>每分钟总 Token</em>
-            </div>
-            <div>
-              <span>预期 TPS</span>
-              <strong>{{ number(demoTps) }}</strong>
-              <em>每秒总 Token</em>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">新手看报告的顺序</h2>
-      </div>
-      <div class="section-body">
-        <div class="check-grid">
-          <div v-for="item in checklist" :key="item.title" class="check-card">
+        <nav class="index-nav" aria-label="指标帮助章节">
+          <a
+            v-for="item in indexItems"
+            :key="item.target"
+            :href="item.href"
+            :class="{ active: activeSection === item.target }"
+            :aria-current="activeSection === item.target ? 'location' : undefined"
+            @click.prevent="scrollToSection(item.target)"
+          >
             <span>{{ item.step }}</span>
-            <strong>{{ item.title }}</strong>
-            <p>{{ item.description }}</p>
+            <strong>{{ item.label }}</strong>
+          </a>
+        </nav>
+        <div class="index-metrics">
+          <span v-for="metric in quickMetrics" :key="metric">{{ metric }}</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="metrics-content">
+      <div id="metrics-overview" class="section">
+        <div class="section-header">
+          <h2 class="section-title">指标科普</h2>
+          <el-tag effect="plain">给第一次压测的人看</el-tag>
+        </div>
+        <div class="section-body">
+          <div class="hero-grid">
+            <div>
+              <span>核心关系</span>
+              <strong>并发不是 RPM</strong>
+              <p>并发是同一时间有多少请求在路上；RPM 是一分钟内真正完成了多少成功请求。</p>
+            </div>
+            <div>
+              <span>启动前预期</span>
+              <strong>先估算，再压测</strong>
+              <p>配置页会按假设单请求耗时估算 RPM、TPM、TPS，真实结果以运行报告为准。</p>
+            </div>
+            <div>
+              <span>看报告顺序</span>
+              <strong>成功率优先</strong>
+              <p>吞吐再高，如果成功率低或 P99 很差，也不能作为稳定容量基线。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="metrics-table" class="section">
+        <div class="section-header">
+          <h2 class="section-title">常用指标怎么理解</h2>
+        </div>
+        <div class="section-body">
+          <el-table :data="metricRows" border>
+            <el-table-column prop="name" label="指标" width="130" />
+            <el-table-column prop="plain" label="小白理解" min-width="230" />
+            <el-table-column prop="formula" label="近似公式" min-width="250">
+              <template #default="{ row }">
+                <code>{{ row.formula }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column prop="watch" label="主要看什么" min-width="260" />
+          </el-table>
+        </div>
+      </div>
+
+      <div id="metrics-formula" class="grid-2">
+        <div class="section">
+          <div class="section-header">
+            <h2 class="section-title">并发、RPM、TPM 的关系</h2>
+          </div>
+          <div class="section-body">
+            <div class="formula-stack">
+              <div>
+                <span>请求吞吐</span>
+                <code>RPM ≈ 并发数 ÷ 单请求平均耗时 × 60</code>
+              </div>
+              <div>
+                <span>Token 吞吐</span>
+                <code>TPM ≈ RPM × 单请求总 Token</code>
+              </div>
+              <div>
+                <span>秒级 Token 吞吐</span>
+                <code>TPS = TPM ÷ 60</code>
+              </div>
+            </div>
+            <el-alert
+              class="formula-alert"
+              title="例子：500 并发不等于 500 RPM"
+              description="如果每个请求平均 10 秒完成，500 并发大约是 3,000 RPM；如果每个请求平均 60 秒完成，才接近 500 RPM。"
+              type="info"
+              show-icon
+              :closable="false"
+            />
+          </div>
+        </div>
+
+        <div id="metrics-calculator" class="section">
+          <div class="section-header">
+            <h2 class="section-title">启动前估算器</h2>
+            <span class="muted">用于理解公式，不会发起测试</span>
+          </div>
+          <div class="section-body">
+            <div class="calculator-grid">
+              <el-form-item label="并发数">
+                <el-input-number v-model="demo.concurrency" :min="1" :max="5000" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="单请求平均耗时">
+                <el-segmented v-model="demo.latencySec" :options="latencyOptions" />
+              </el-form-item>
+              <el-form-item label="输入 Token">
+                <el-input-number v-model="demo.inputTokens" :min="1" :step="1000" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="最大输出 Token">
+                <el-input-number v-model="demo.outputTokens" :min="1" :step="128" controls-position="right" />
+              </el-form-item>
+            </div>
+            <div class="estimate-grid">
+              <div>
+                <span>预期 RPM</span>
+                <strong>{{ number(demoRpm) }}</strong>
+                <em>每分钟成功请求数</em>
+              </div>
+              <div>
+                <span>预期 TPM</span>
+                <strong>{{ number(demoTpm) }}</strong>
+                <em>每分钟总 Token</em>
+              </div>
+              <div>
+                <span>预期 TPS</span>
+                <strong>{{ number(demoTps) }}</strong>
+                <em>每秒总 Token</em>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="metrics-checklist" class="section">
+        <div class="section-header">
+          <h2 class="section-title">新手看报告的顺序</h2>
+        </div>
+        <div class="section-body">
+          <div class="check-grid">
+            <div v-for="item in checklist" :key="item.title" class="check-card">
+              <span>{{ item.step }}</span>
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+            </div>
           </div>
         </div>
       </div>
@@ -134,7 +164,17 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
+
+const indexItems = [
+  { step: '01', label: '指标总览', target: 'metrics-overview', href: '#metrics-overview' },
+  { step: '02', label: '指标表', target: 'metrics-table', href: '#metrics-table' },
+  { step: '03', label: '吞吐公式', target: 'metrics-formula', href: '#metrics-formula' },
+  { step: '04', label: '预期估算', target: 'metrics-calculator', href: '#metrics-calculator' },
+  { step: '05', label: '报告顺序', target: 'metrics-checklist', href: '#metrics-checklist' }
+]
+
+const quickMetrics = ['成功率', 'RPM', 'TPM', 'P95', 'P99', 'TTFT', 'Decode']
 
 const latencyOptions = [
   { label: '2s', value: 2 },
@@ -150,6 +190,7 @@ const demo = reactive({
   inputTokens: 1000,
   outputTokens: 128
 })
+const activeSection = ref(indexItems[0].target)
 
 const demoRpm = computed(() => Number(demo.concurrency || 0) / Number(demo.latencySec || 1) * 60)
 const demoTpm = computed(() => demoRpm.value * (Number(demo.inputTokens || 0) + Number(demo.outputTokens || 0)))
@@ -227,11 +268,126 @@ function number(value) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
+
+function scrollToSection(target) {
+  const section = document.getElementById(target)
+  if (!section) return
+  activeSection.value = target
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 </script>
 
 <style scoped>
 .metrics-help {
+  display: grid;
+  align-items: start;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 14px;
   max-width: 1480px;
+}
+
+.metrics-index {
+  position: sticky;
+  top: 0;
+}
+
+.metrics-index .section-body {
+  display: grid;
+  gap: 14px;
+}
+
+.index-summary {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.index-summary strong {
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.index-summary span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.index-nav {
+  display: grid;
+  gap: 6px;
+}
+
+.index-nav a {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #334155;
+  text-decoration: none;
+  transition:
+    background-color var(--app-transition),
+    border-color var(--app-transition),
+    color var(--app-transition);
+}
+
+.index-nav a:hover,
+.index-nav a:focus,
+.index-nav a.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.index-nav span {
+  color: #64748b;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.index-nav strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.index-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.index-metrics span {
+  padding: 4px 7px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.metrics-content {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.metrics-content [id] {
+  scroll-margin-top: 14px;
+}
+
+.metrics-content > .section,
+.metrics-content > .grid-2 {
+  margin-bottom: 0;
 }
 
 .hero-grid,
@@ -336,10 +492,32 @@ code {
 }
 
 @media (max-width: 1180px) {
+  .metrics-help {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-index {
+    position: static;
+  }
+
+  .index-nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .index-nav a {
+    grid-template-columns: 1fr;
+  }
+
   .hero-grid,
   .estimate-grid,
   .check-grid,
   .calculator-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .index-nav {
     grid-template-columns: 1fr;
   }
 }
