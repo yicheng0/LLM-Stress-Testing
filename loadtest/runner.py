@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 import random
 import statistics
 import time
 from collections import deque
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 import aiohttp
 
@@ -21,6 +22,7 @@ from .summary import MetricsAccumulator
 
 ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
+T = TypeVar("T")
 
 
 class LoadTestRunner:
@@ -76,6 +78,70 @@ class LoadTestRunner:
 
     def should_stop(self) -> bool:
         return bool(self.stop_event and self.stop_event.is_set())
+
+    def deadline_reached(self) -> bool:
+        return bool(self.stop_at and time.time() >= self.stop_at)
+
+    async def _wait_with_stop(self, awaitable: Awaitable[T], *, set_stop_on_deadline: bool = False) -> tuple[bool, T | None]:
+        task = asyncio.create_task(awaitable)
+        wait_tasks: list[asyncio.Task[Any]] = [task]
+        stop_task: asyncio.Task[Any] | None = None
+        deadline_task: asyncio.Task[Any] | None = None
+        try:
+            if self.stop_event is not None:
+                if self.stop_event.is_set():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                    return False, None
+                stop_task = asyncio.create_task(self.stop_event.wait())
+                wait_tasks.append(stop_task)
+
+            if self.stop_at:
+                remaining = self.stop_at - time.time()
+                if remaining <= 0:
+                    if set_stop_on_deadline and self.stop_event is not None and not self.stop_event.is_set():
+                        self.stop_event.set()
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                    return False, None
+                deadline_task = asyncio.create_task(asyncio.sleep(remaining))
+                wait_tasks.append(deadline_task)
+
+            done, pending = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+            if task in done:
+                if task.cancelled():
+                    return False, None
+                return True, await task
+
+            if deadline_task is not None and deadline_task in done and set_stop_on_deadline and self.stop_event is not None and not self.stop_event.is_set():
+                self.stop_event.set()
+
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            return False, None
+        finally:
+            for waiter in wait_tasks:
+                if waiter is task:
+                    continue
+                if not waiter.done():
+                    waiter.cancel()
+                with suppress(asyncio.CancelledError):
+                    await waiter
+
+    async def _sleep_or_stop(self, seconds: float) -> bool:
+        if seconds <= 0:
+            return True
+        completed, _ = await self._wait_with_stop(asyncio.sleep(seconds), set_stop_on_deadline=True)
+        return completed
+
+    async def _request_or_stop(self, session, request_id: int) -> Optional[RequestResult]:
+        completed, result = await self._wait_with_stop(self.send_one(session, request_id), set_stop_on_deadline=True)
+        if not completed:
+            return None
+        return result
 
     async def emit_log(self, level: str, message: str) -> None:
         if self.log_callback:
@@ -218,15 +284,18 @@ class LoadTestRunner:
         return await self.executor.send_one(session, request_id)
 
     async def worker(self, worker_id: int, session: aiohttp.ClientSession, semaphore: asyncio.Semaphore):
-        while time.time() < self.stop_at and not self.should_stop():
+        while not self.should_stop() and not self.deadline_reached():
             async with semaphore:
-                if self.should_stop():
+                if self.should_stop() or self.deadline_reached():
                     break
                 req_id = await self.next_request_id()
-                result = await self.send_one(session, req_id)
+                result = await self._request_or_stop(session, req_id)
+                if result is None:
+                    break
                 self._record_result(result)
                 await self.emit_progress()
-                elapsed = int(time.time() - (self.stop_at - self.config.duration_sec))
+                elapsed_base = self.stop_at - self.config.duration_sec if self.stop_at else self.test_start_wall_time
+                elapsed = int(max(0.0, time.time() - elapsed_base))
                 total = len(self.results)
                 success = self._success_count
                 current_success_rate = success / total * 100 if total > 0 else 0
@@ -239,7 +308,8 @@ class LoadTestRunner:
                     print(f"  [{elapsed:>4}s] 已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s", flush=True)
                     await self.emit_log("info", f"已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s")
             if self.config.think_time_ms > 0:
-                await asyncio.sleep(self.config.think_time_ms / 1000.0)
+                if not await self._sleep_or_stop(self.config.think_time_ms / 1000.0):
+                    break
 
     async def run(self) -> Dict[str, Any]:
         connector = aiohttp.TCPConnector(limit=0, ssl=False)
@@ -256,8 +326,8 @@ class LoadTestRunner:
                 warm_tasks = []
                 for _ in range(self.config.warmup_requests):
                     req_id = await self.next_request_id()
-                    warm_tasks.append(self.send_one(session, req_id))
-                warmup_results = await asyncio.gather(*warm_tasks, return_exceptions=False)
+                    warm_tasks.append(asyncio.create_task(self._request_or_stop(session, req_id)))
+                warmup_results = [result for result in await asyncio.gather(*warm_tasks) if result is not None]
                 for result in warmup_results:
                     self._record_result(result)
                 warmup_success = sum(1 for r in warmup_results if r.ok)
@@ -269,6 +339,10 @@ class LoadTestRunner:
                     print(f"[!] 错误详情: {first_error.error_message[:500]}", flush=True)
                     print(f"[!] HTTP状态码: {first_error.status}", flush=True)
                     await self.emit_log("error", f"预热请求全部失败：{first_error.error_type}")
+                if self.should_stop() or self.deadline_reached():
+                    await self.emit_progress(force=True)
+                    await self.emit_log("warning", "收到停止信号，结束压测")
+                    return self.summarize()
             print(f"[*] 开始正式压测，并发={self.config.concurrency}，时长={self.config.duration_sec}s ...", flush=True)
             await self.emit_log("info", f"开始正式压测，并发={self.config.concurrency}，时长={self.config.duration_sec}s")
             await self.emit_progress(force=True)
@@ -334,7 +408,8 @@ class LoadTestRunner:
                     cooldown = 10
                     print(f"\n[*] 冷却 {cooldown} 秒后开始下一个测试点...\n")
                     await self.emit_log("info", f"冷却 {cooldown} 秒后开始下一个测试点")
-                    await asyncio.sleep(cooldown)
+                    if not await self._sleep_or_stop(cooldown):
+                        break
             if self.should_stop():
                 break
         print(f"\n{'='*80}")

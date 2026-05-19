@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 import unittest
 
 from backend.app.core.task_status import (
@@ -10,6 +12,7 @@ from backend.app.core.task_status import (
     stopped_final_status,
 )
 from loadtest.config import LoadTestConfig
+from loadtest.runner import LoadTestRunner
 from loadtest.models import RequestResult
 from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder
 
@@ -76,6 +79,79 @@ class MetricsAccumulatorTest(unittest.TestCase):
 
         self.assertEqual(actual["config"], expected["config"])
         self.assertEqual(actual["results"], expected["results"])
+
+
+class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_stop_cancels_in_flight_request(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 60,
+            "input_tokens": 1,
+            "warmup_requests": 0,
+            "enable_stream": False,
+            "timeout_sec": 60,
+        })
+        stop_event = asyncio.Event()
+        runner.stop_event = stop_event
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def fake_send_one(session, request_id):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        runner.send_one = fake_send_one
+        runner.stop_at = time.time() + 60
+
+        task = asyncio.create_task(runner._request_or_stop(object(), 1))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        stop_event.set()
+
+        result = await asyncio.wait_for(task, timeout=1)
+
+        self.assertIsNone(result)
+        self.assertTrue(cancelled.is_set())
+
+    async def test_deadline_stops_worker_loop(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 1,
+            "input_tokens": 1,
+            "warmup_requests": 0,
+            "enable_stream": False,
+            "timeout_sec": 60,
+        })
+        stop_event = asyncio.Event()
+        runner.stop_event = stop_event
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def fake_send_one(session, request_id):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        runner.send_one = fake_send_one
+        runner.stop_at = time.time() + 0.05
+
+        await asyncio.wait_for(runner.worker(0, object(), asyncio.Semaphore(1)), timeout=2)
+
+        self.assertTrue(started.is_set())
+        self.assertTrue(cancelled.is_set())
+        self.assertTrue(stop_event.is_set())
 
 
 if __name__ == "__main__":
