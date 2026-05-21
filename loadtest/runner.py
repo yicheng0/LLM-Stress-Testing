@@ -62,6 +62,8 @@ class LoadTestRunner:
         self._success_count = 0
         self._failure_count = 0
         self._success_token_count = 0
+        self._attempt_count = 0
+        self._attempt_token_count = 0
         self._success_latency_window: deque[float] = deque(maxlen=10)
 
     def _prompt_for_tokens(self, input_tokens: int) -> tuple[str, int]:
@@ -168,6 +170,11 @@ class LoadTestRunner:
         if self.result_callback:
             self.result_callback(result)
         self.metrics_accumulator.record(result)
+        attempt_count = max(1, int(result.retry_count or 0) + 1)
+        self._attempt_count += attempt_count
+        self._attempt_token_count += result.input_tokens * attempt_count
+        if result.ok:
+            self._attempt_token_count += result.output_tokens
         if result.ok:
             self._success_count += 1
             self._success_token_count += result.total_tokens
@@ -194,6 +201,9 @@ class LoadTestRunner:
             "current_qps": round(self._success_count / elapsed, 4),
             "current_rpm": round(self._success_count * 60 / elapsed, 4),
             "current_tpm": round(self._success_token_count * 60 / elapsed, 4),
+            "attempt_qps": round(self._attempt_count / elapsed, 4),
+            "attempt_rpm": round(self._attempt_count * 60 / elapsed, 4),
+            "attempt_tpm": round(self._attempt_token_count * 60 / elapsed, 4),
             "avg_latency_sec": round(recent_latency, 4),
             "elapsed_sec": round(elapsed, 2),
         }))
@@ -408,6 +418,8 @@ class LoadTestRunner:
                 self._success_count = 0
                 self._failure_count = 0
                 self._success_token_count = 0
+                self._attempt_count = 0
+                self._attempt_token_count = 0
                 self._success_latency_window.clear()
                 summary = await self.run()
                 summary["matrix_config"] = {

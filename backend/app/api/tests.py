@@ -112,16 +112,22 @@ def _dashboard_task_item(
     if progress:
         item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
         item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
+        item_attempt_rpm = _num(progress.get("attempt_rpm"), _num(summary_results.get("attempt_rpm")))
+        item_attempt_tpm = _num(progress.get("attempt_tpm"), _num(summary_results.get("attempt_tpm")))
         item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
         item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
     else:
         item_rpm = _num(summary_results.get("rpm"))
         item_tpm = _num(summary_results.get("total_tpm"))
+        item_attempt_rpm = _num(summary_results.get("attempt_rpm"))
+        item_attempt_tpm = _num(summary_results.get("attempt_tpm"))
         item_success_rate = summary_results.get("success_rate")
         item_p95 = summary_results.get("latency_sec_p95")
     metric_item = {
         "rpm": item_rpm,
         "tpm": item_tpm,
+        "attempt_rpm": item_attempt_rpm,
+        "attempt_tpm": item_attempt_tpm,
         "success_rate": item_success_rate,
         "latency_p95": item_p95,
     }
@@ -139,6 +145,8 @@ def _dashboard_task_item(
         "completed_at": task.completed_at,
         "rpm": item_rpm,
         "tpm": item_tpm,
+        "attempt_rpm": item_attempt_rpm,
+        "attempt_tpm": item_attempt_tpm,
         "success_rate": item_success_rate,
         "latency_p95": item_p95,
         "expected_metrics": expected_metrics,
@@ -409,6 +417,8 @@ async def realtime_dashboard(
     sources = metric_sources
     rpm = sum(_num(item.get("rpm")) for item in sources)
     tpm = sum(_num(item.get("tpm")) for item in sources)
+    attempt_rpm = sum(_num(item.get("attempt_rpm")) for item in sources)
+    attempt_tpm = sum(_num(item.get("attempt_tpm")) for item in sources)
     expected_rpm = sum(_num(item.get("rpm")) for item in target_sources if item.get("rpm") is not None)
     expected_tpm = sum(_num(item.get("tpm")) for item in target_sources if item.get("tpm") is not None)
     expected_tps = sum(_num(item.get("tps")) for item in target_sources if item.get("tps") is not None)
@@ -436,6 +446,8 @@ async def realtime_dashboard(
         "metrics": {
             "rpm": round(rpm, 4),
             "tpm": round(tpm, 4),
+            "attempt_rpm": round(attempt_rpm, 4),
+            "attempt_tpm": round(attempt_tpm, 4),
             "expected_rpm": round(expected_rpm, 4) if expected_rpm else None,
             "expected_tpm": round(expected_tpm, 4) if expected_tpm else None,
             "expected_tps": round(expected_tps, 4) if expected_tps else None,

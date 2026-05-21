@@ -164,6 +164,47 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertEqual(charts["failed_count"], 1)
         self.assertEqual(charts["error_counts"], {"HTTP_429": 1})
 
+    def test_retry_metrics_are_reported_in_summary(self):
+        config = LoadTestConfig(duration_sec=10, warmup_requests=0)
+        results = [
+            result(request_id=1, retry_count=2, total_tokens=120),
+            result(request_id=2, retry_count=0, total_tokens=130),
+        ]
+
+        accumulator = MetricsAccumulator()
+        for item in results:
+            accumulator.record(item)
+
+        summary = accumulator.build_summary(config, actual_input_tokens=100, started_at=0)
+        results_summary = summary["results"]
+
+        self.assertEqual(results_summary["total_requests"], 2)
+        self.assertEqual(results_summary["successful_requests"], 2)
+        self.assertEqual(results_summary["attempt_requests"], 4)
+        self.assertEqual(results_summary["attempt_tokens"], 500)
+        self.assertGreater(results_summary["attempt_rpm"], results_summary["rpm"])
+        self.assertGreater(results_summary["attempt_tpm"], results_summary["total_tpm"])
+
+    def test_retry_metrics_inclusive_for_failed_results(self):
+        config = LoadTestConfig(duration_sec=10, warmup_requests=0)
+        failed = result(
+            request_id=1,
+            ok=False,
+            status=429,
+            total_tokens=0,
+            retry_count=2,
+            error_type="HTTP_429",
+            error_message="rate limited",
+        )
+
+        accumulator = MetricsAccumulator()
+        accumulator.record(failed)
+        summary = accumulator.build_summary(config, actual_input_tokens=100, started_at=0)
+        results_summary = summary["results"]
+
+        self.assertEqual(results_summary["attempt_requests"], 3)
+        self.assertEqual(results_summary["attempt_tokens"], 300)
+
     def test_streaming_result_collector_writes_details_and_charts(self):
         import tempfile
 
@@ -329,6 +370,38 @@ class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(started.is_set())
         self.assertTrue(cancelled.is_set())
         self.assertTrue(stop_event.is_set())
+
+    async def test_progress_includes_retry_metrics(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 60,
+            "input_tokens": 1,
+            "warmup_requests": 0,
+            "enable_stream": False,
+            "timeout_sec": 60,
+        }, retain_results=False)
+        captured = {}
+
+        async def progress(data):
+            captured.update(data)
+
+        runner.progress_callback = progress
+        runner.test_start_wall_time = time.time() - 10
+        runner._success_count = 1
+        runner._success_token_count = 120
+        runner._attempt_count = 3
+        runner._attempt_token_count = 300
+        runner.metrics_accumulator.total_requests = 1
+
+        await runner.emit_progress(force=True)
+
+        self.assertIn("attempt_rpm", captured)
+        self.assertIn("attempt_tpm", captured)
+        self.assertGreater(captured["attempt_rpm"], captured["current_rpm"])
+        self.assertGreater(captured["attempt_tpm"], captured["current_tpm"])
 
 
 class StreamParserTest(unittest.IsolatedAsyncioTestCase):

@@ -9,6 +9,15 @@ from .metrics import percentile_metrics, throughput_metrics
 from .models import RequestResult
 
 
+def retry_attempt_count(result: RequestResult) -> int:
+    return max(1, int(result.retry_count or 0) + 1)
+
+
+def retry_attempt_tokens(result: RequestResult) -> int:
+    attempts = retry_attempt_count(result)
+    return result.input_tokens * attempts + (result.output_tokens if result.ok else 0)
+
+
 class MetricsSummaryBuilder:
     def __init__(self, config: LoadTestConfig):
         self.config = config
@@ -29,10 +38,15 @@ class MetricsSummaryBuilder:
         total_input_tokens = sum(r.input_tokens for r in success)
         total_output_tokens = sum(r.output_tokens for r in success)
         total_tokens = sum(r.total_tokens for r in success)
+        attempt_requests = sum(retry_attempt_count(r) for r in results)
+        attempt_tokens = sum(retry_attempt_tokens(r) for r in results)
         ttfts = [r.ttft_sec for r in success if r.ttft_sec is not None]
         decode_times = [r.latency_sec - r.ttft_sec for r in success if r.ttft_sec is not None]
         error_counts = Counter(r.error_type or "UNKNOWN" for r in failed)
         status_counts = Counter(str(r.status) for r in results)
+        attempt_qps = attempt_requests / wall_time if wall_time > 0 else 0.0
+        attempt_rpm = attempt_requests * 60 / wall_time if wall_time > 0 else 0.0
+        attempt_tpm = attempt_tokens * 60 / wall_time if wall_time > 0 else 0.0
 
         return {
             "config": {
@@ -57,6 +71,11 @@ class MetricsSummaryBuilder:
                 "success_rate": round(len(success) / len(results), 4) if results else 0.0,
                 "qps": round(len(success) / wall_time, 4) if wall_time > 0 else 0.0,
                 "rpm": round(len(success) * 60 / wall_time, 4) if wall_time > 0 else 0.0,
+                "attempt_requests": attempt_requests,
+                "attempt_tokens": attempt_tokens,
+                "attempt_qps": round(attempt_qps, 4) if wall_time > 0 else 0.0,
+                "attempt_rpm": round(attempt_rpm, 4) if wall_time > 0 else 0.0,
+                "attempt_tpm": round(attempt_tpm, 2) if wall_time > 0 else 0.0,
                 **throughput_metrics(total_input_tokens, total_output_tokens, total_tokens, wall_time),
                 **percentile_metrics(latencies, "latency_sec"),
                 **percentile_metrics(ttfts, "ttft_sec"),
@@ -76,6 +95,8 @@ class MetricsAccumulator:
         self.total_requests = 0
         self.successful_requests = 0
         self.failed_requests = 0
+        self.attempt_requests = 0
+        self.attempt_tokens = 0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_tokens = 0
@@ -87,6 +108,8 @@ class MetricsAccumulator:
 
     def record(self, result: RequestResult) -> None:
         self.total_requests += 1
+        self.attempt_requests += retry_attempt_count(result)
+        self.attempt_tokens += retry_attempt_tokens(result)
         self.status_counts[str(result.status)] += 1
         if result.ok:
             self.successful_requests += 1
@@ -114,6 +137,9 @@ class MetricsAccumulator:
         wall_time = config.duration_sec
         if started_at and self.total_requests:
             wall_time = max(0.001, time.time() - started_at)
+        attempt_qps = self.attempt_requests / wall_time if wall_time > 0 else 0.0
+        attempt_rpm = self.attempt_requests * 60 / wall_time if wall_time > 0 else 0.0
+        attempt_tpm = self.attempt_tokens * 60 / wall_time if wall_time > 0 else 0.0
 
         return {
             "config": {
@@ -138,6 +164,11 @@ class MetricsAccumulator:
                 "success_rate": round(self.successful_requests / self.total_requests, 4) if self.total_requests else 0.0,
                 "qps": round(self.successful_requests / wall_time, 4) if wall_time > 0 else 0.0,
                 "rpm": round(self.successful_requests * 60 / wall_time, 4) if wall_time > 0 else 0.0,
+                "attempt_requests": self.attempt_requests,
+                "attempt_tokens": self.attempt_tokens,
+                "attempt_qps": round(attempt_qps, 4) if wall_time > 0 else 0.0,
+                "attempt_rpm": round(attempt_rpm, 4) if wall_time > 0 else 0.0,
+                "attempt_tpm": round(attempt_tpm, 2) if wall_time > 0 else 0.0,
                 **throughput_metrics(self.total_input_tokens, self.total_output_tokens, self.total_tokens, wall_time),
                 **percentile_metrics(self.latencies, "latency_sec"),
                 **percentile_metrics(self.ttfts, "ttft_sec"),
