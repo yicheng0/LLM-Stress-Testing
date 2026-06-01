@@ -43,8 +43,6 @@ Copy `.env.example` to `.env` for local overrides. The current backend reads:
 - `MAX_RUNNING_TESTS`: default `2`
 - `MAX_CONCURRENCY_PER_TEST`: default `500`
 - `RESULT_RETENTION_HOURS`: default `24`
-- `CLEANUP_ON_STARTUP`: default `true`
-- `CLEANUP_INTERVAL_MINUTES`: default `60`
 
 The frontend can use:
 
@@ -62,7 +60,7 @@ API keys are submitted per test run. The backend removes `api_key` before persis
 
 The web console uses PostgreSQL as the default state store in deployment. It stores task metadata, status, events, summaries, and file paths. Report artifacts are written under `results/`, with web-console runs grouped by task id.
 
-Results are intended for short-term local review by default. Use the UI delete action to remove a task and its task-specific result directory, or let the cleanup job remove old local artifacts automatically. Before sharing reports, remove sensitive request/response payloads and endpoint details.
+Results are intended for short-term local review by default. Use the UI delete action to remove a task and its task-specific result directory. The backend does not run automatic startup or interval cleanup jobs. Before sharing reports, remove sensitive request/response payloads and endpoint details.
 
 ## Smoke Check
 
@@ -93,6 +91,11 @@ Docker Compose defaults to these host ports:
 
 - Web console: `8080`
 - Backend API: `8081`
+
+## Operations Runbooks
+
+- [MySQL 30 分钟 Dump 高 CPU 排障 Runbook](docs/mysql_dump_high_cpu_runbook.md): locate recurring `SQL_NO_CACHE` dump/log cleanup jobs, collect read-only evidence, and lower schedule impact without deleting the task first.
+- Supporting assets: `scripts/mysql_dump_triage.sql`, `scripts/mysql_dump_scheduler_audit.sh`, and `scripts/mysql_dump_mitigation_templates.sql`.
 
 ## CLI Example
 

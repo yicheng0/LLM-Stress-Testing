@@ -331,25 +331,3 @@ class Repository:
         if task_results_dir.exists() and results_root in task_results_dir.parents:
             shutil.rmtree(task_results_dir)
         return True
-
-    def cleanup_expired_results(self, retention_hours: int | None = None) -> int:
-        retention = settings.result_retention_hours if retention_hours is None else retention_hours
-        if retention <= 0:
-            cutoff = datetime.utcnow()
-        else:
-            cutoff = datetime.utcnow() - timedelta(hours=retention)
-
-        terminal_statuses = ["completed", "failed", "cancelled", "interrupted"]
-        with self.session() as db:
-            stmt = select(TestTask.id).where(
-                TestTask.status.in_(terminal_statuses),
-                TestTask.completed_at.is_not(None),
-                TestTask.completed_at < cutoff,
-            )
-            task_ids = [row[0] for row in db.execute(stmt).all()]
-
-        deleted = 0
-        for task_id in task_ids:
-            if self.delete_task(task_id):
-                deleted += 1
-        return deleted

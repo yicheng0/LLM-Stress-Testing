@@ -594,7 +594,7 @@ const retentionInfo = computed(() => {
     return {
       label: '等待完成',
       type: 'info',
-      description: '任务完成后会根据后端 RESULT_RETENTION_HOURS 计算过期时间。'
+      description: '任务完成后会根据后端 RESULT_RETENTION_HOURS 计算过期提示时间。'
     }
   }
   const expired = new Date(report.value.expires_at).getTime() <= Date.now()
@@ -602,8 +602,8 @@ const retentionInfo = computed(() => {
     label: expired ? '已过期' : '保留中',
     type: expired ? 'warning' : 'success',
     description: expired
-      ? '这条数据已超过保留时间，可在历史记录页执行清理过期。'
-      : `到期后可通过历史记录页的清理过期按钮删除报告、明细和相关文件。`
+      ? '这条数据已超过保留时间，需要时可在历史记录页手动删除。'
+      : `到期后不会自动删除，可通过历史记录页手动删除报告、明细和相关文件。`
   }
 })
 const customerSummaryLines = computed(() => {

@@ -74,10 +74,6 @@ export function deleteTests(ids) {
   })
 }
 
-export function cleanupExpiredTests() {
-  return request('/api/tests/cleanup/expired', { method: 'POST' })
-}
-
 export function getVersionInfo() {
   return request('/api/system/version')
 }

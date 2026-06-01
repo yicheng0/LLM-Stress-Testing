@@ -100,11 +100,6 @@ class DetailsOut(BaseModel):
     items: list[dict[str, Any]]
 
 
-class CleanupOut(BaseModel):
-    deleted: int
-    retention_hours: int
-
-
 class BulkDeleteIn(BaseModel):
     ids: list[str] = Field(default_factory=list)
 

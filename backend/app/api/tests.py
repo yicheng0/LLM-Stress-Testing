@@ -15,7 +15,7 @@ from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
-from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, CleanupOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
+from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
@@ -474,12 +474,6 @@ async def realtime_dashboard(
         ),
         "recent_tasks": recent_tasks[:8],
     }
-
-
-@router.post("/cleanup/expired", response_model=CleanupOut)
-async def cleanup_expired(repository: Repository = Depends(get_repository)) -> CleanupOut:
-    deleted = repository.cleanup_expired_results()
-    return CleanupOut(deleted=deleted, retention_hours=settings.result_retention_hours)
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteOut)

@@ -131,7 +131,7 @@ const retentionSummary = computed(() => {
     .filter((value) => Number.isFinite(value.getTime()) && value.getTime() > Date.now())
     .sort((a, b) => a.getTime() - b.getTime())[0]
   if (nextExpiry) {
-    return `报告、明细和事件按后端保留策略自动到期；最近一条将在 ${formatTime(nextExpiry)} 过期。`
+    return `报告、明细和事件按后端保留策略标记到期；最近一条将在 ${formatTime(nextExpiry)} 过期，需手动删除。`
   }
   return '报告、明细和事件仅用于测试诊断；需要删除时请勾选记录后点击“删除选中”。'
 })
