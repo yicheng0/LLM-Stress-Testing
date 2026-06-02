@@ -21,7 +21,7 @@ class TestCreate(BaseModel):
     duration_sec: int = Field(default=60, ge=1, le=86400)
     input_tokens: int = Field(default=1000, ge=1)
     max_output_tokens: int = Field(default=128, ge=1)
-    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_sec: int = Field(default=600, ge=1)
     connect_timeout_sec: int = Field(default=30, ge=1)
     warmup_requests: int = Field(default=0, ge=0)

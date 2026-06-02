@@ -42,7 +42,7 @@ class WebLoadTestRunner:
             "duration_sec": int(self.config.get("duration_sec", 60)),
             "input_tokens": int(self.config.get("input_tokens", 1000)),
             "max_output_tokens": int(self.config.get("max_output_tokens", 128)),
-            "temperature": float(self.config.get("temperature", 0.0)),
+            "temperature": None if self.config.get("temperature") in {None, ""} else float(self.config.get("temperature")),
             "timeout_sec": int(self.config.get("timeout_sec", 600)),
             "connect_timeout_sec": int(self.config.get("connect_timeout_sec", 30)),
             "warmup_requests": int(self.config.get("warmup_requests", 0)),

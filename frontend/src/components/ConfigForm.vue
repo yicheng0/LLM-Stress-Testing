@@ -408,7 +408,15 @@
           <el-collapse-item title="超时、重试和节流" name="advanced">
             <div class="grid-3">
               <el-form-item label="Temperature" prop="temperature">
-                <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" controls-position="right" />
+                <el-input-number
+                  v-model="form.temperature"
+                  :min="0"
+                  :max="2"
+                  :step="0.1"
+                  controls-position="right"
+                  placeholder="留空则不发送"
+                  clearable
+                />
               </el-form-item>
               <el-form-item label="请求超时（秒）" prop="timeout_sec">
                 <el-input-number v-model="form.timeout_sec" :min="1" controls-position="right" />
@@ -592,7 +600,7 @@ const defaults = {
   duration_sec: 60,
   input_tokens: 1000,
   max_output_tokens: 128,
-  temperature: 0,
+  temperature: null,
   timeout_sec: 600,
   connect_timeout_sec: 30,
   warmup_requests: 0,

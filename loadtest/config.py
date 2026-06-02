@@ -17,7 +17,7 @@ class LoadTestConfig:
     duration_sec: int = 300
     input_tokens: int = 60000
     max_output_tokens: int = 128
-    temperature: float = 0.0
+    temperature: float | None = None
     timeout_sec: int = 600
     connect_timeout_sec: int = 30
     warmup_requests: int = 5
@@ -64,7 +64,7 @@ class LoadTestConfig:
         self.duration_sec = int(self.duration_sec)
         self.input_tokens = int(self.input_tokens)
         self.max_output_tokens = int(self.max_output_tokens)
-        self.temperature = float(self.temperature)
+        self.temperature = None if self.temperature in {None, ""} else float(self.temperature)
         self.timeout_sec = int(self.timeout_sec)
         self.connect_timeout_sec = int(self.connect_timeout_sec)
         self.warmup_requests = int(self.warmup_requests)

@@ -75,7 +75,7 @@ def _body(payload: dict[str, Any]) -> dict[str, Any]:
         model=payload.get("model") or "",
         prompt="ping",
         max_output_tokens=16,
-        temperature=0,
+        temperature=None,
         enable_stream=False,
     )
 

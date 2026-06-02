@@ -97,48 +97,56 @@ def build_payload(
     model: str,
     prompt: str,
     max_output_tokens: int,
-    temperature: float,
+    temperature: float | None,
     enable_stream: bool,
 ) -> dict[str, Any]:
     if protocol == "gemini":
+        generation_config: dict[str, Any] = {
+            "maxOutputTokens": max_output_tokens,
+        }
+        if temperature is not None:
+            generation_config["temperature"] = temperature
         return {
             "systemInstruction": {"parts": [{"text": "You are a benchmarking target. Return a concise deterministic answer."}]},
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": max_output_tokens,
-                "temperature": temperature,
-            },
+            "generationConfig": generation_config,
         }
 
     if protocol == "anthropic":
-        return {
+        payload: dict[str, Any] = {
             "model": model,
             "system": "You are a benchmarking target. Return a concise deterministic answer.",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_output_tokens,
-            "temperature": temperature,
             "stream": enable_stream,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        return payload
 
     if normalize_endpoint(endpoint, "openai").endswith("/responses"):
-        return {
+        payload = {
             "model": model,
             "input": prompt,
             "max_output_tokens": max_output_tokens,
-            "temperature": temperature,
             "stream": enable_stream,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        return payload
 
-    return {
+    payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": "You are a benchmarking target. Return a concise deterministic answer."},
             {"role": "user", "content": prompt},
         ],
         "max_tokens": max_output_tokens,
-        "temperature": temperature,
         "stream": enable_stream,
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
 
 
 def build_headers(protocol: str, *, api_key: str, anthropic_version: str = "2023-06-01") -> dict[str, str]:

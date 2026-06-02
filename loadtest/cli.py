@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-sec", type=int, default=300)
     parser.add_argument("--input-tokens", type=int, default=60000)
     parser.add_argument("--max-output-tokens", type=int, default=128)
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--temperature", type=float, default=None, help="采样温度；不传则不发送 temperature 字段")
     parser.add_argument("--timeout-sec", type=int, default=600)
     parser.add_argument("--connect-timeout-sec", type=int, default=30)
     parser.add_argument("--warmup-requests", type=int, default=5)

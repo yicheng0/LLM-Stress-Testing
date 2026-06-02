@@ -13,6 +13,7 @@ from backend.app.core.task_status import (
     is_terminal_status,
     stopped_final_status,
 )
+from backend.app.core.preflight import _body as preflight_body
 from backend.app.core.repository import Repository
 from backend.app.core.report_service import build_chart_data, load_chart_cache, load_details
 from backend.app.models.database import TestResult as DbTestResult
@@ -23,6 +24,7 @@ from loadtest.executor import RequestExecutor
 from loadtest.metrics import percentile, percentile_metrics
 from loadtest.runner import LoadTestRunner
 from loadtest.models import RequestResult
+from loadtest.protocols import build_payload
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
 from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder
@@ -222,6 +224,59 @@ class MetricsAccumulatorTest(unittest.TestCase):
             self.assertEqual(len(items), 2)
             self.assertEqual(charts["detail_count"], 2)
             self.assertEqual(charts["failed_count"], 1)
+
+
+class RequestPayloadTemperatureTest(unittest.TestCase):
+    def test_payload_omits_temperature_when_none(self):
+        cases = [
+            ("openai", "/chat/completions", ("temperature",)),
+            ("openai", "/responses", ("temperature",)),
+            ("anthropic", "/messages", ("temperature",)),
+            ("gemini", "/models/gemini-pro:generateContent", ("generationConfig", "temperature")),
+        ]
+
+        for protocol, endpoint, path in cases:
+            with self.subTest(protocol=protocol, endpoint=endpoint):
+                payload = build_payload(
+                    protocol,
+                    endpoint=endpoint,
+                    model="new-model",
+                    prompt="ping",
+                    max_output_tokens=16,
+                    temperature=None,
+                    enable_stream=False,
+                )
+                current = payload
+                for key in path[:-1]:
+                    current = current[key]
+                self.assertNotIn(path[-1], current)
+
+    def test_payload_includes_temperature_when_zero_is_explicit(self):
+        payload = build_payload(
+            "openai",
+            endpoint="/chat/completions",
+            model="legacy-model",
+            prompt="ping",
+            max_output_tokens=16,
+            temperature=0,
+            enable_stream=False,
+        )
+
+        self.assertEqual(payload["temperature"], 0)
+
+    def test_load_test_config_accepts_empty_temperature(self):
+        self.assertIsNone(LoadTestConfig.from_mapping({"temperature": None}).temperature)
+        self.assertIsNone(LoadTestConfig.from_mapping({"temperature": ""}).temperature)
+        self.assertEqual(LoadTestConfig.from_mapping({"temperature": "0"}).temperature, 0.0)
+
+    def test_preflight_body_omits_temperature(self):
+        payload = preflight_body({
+            "api_protocol": "openai",
+            "endpoint": "/v1/chat/completions",
+            "model": "new-model",
+        })
+
+        self.assertNotIn("temperature", payload)
 
 
 class DashboardRepositoryTest(unittest.TestCase):
