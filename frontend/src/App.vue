@@ -168,7 +168,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, DataAnalysis, Document, DocumentAdd, Download, Menu, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { Clock, DataAnalysis, Document, DocumentAdd, Download, EditPen, Menu, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import packageInfo from '../package.json'
 import { checkVersionInfo, getVersionInfo, updateVersionInfo } from './api/client'
@@ -180,6 +180,7 @@ const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
 const mobileNavOpen = ref(false)
 const navItems = [
   { index: '/tests/new', label: '新建测试', icon: Plus },
+  { index: '/tests/custom-case', label: '自定义 Case', icon: EditPen },
   { index: '/history', label: '历史记录', icon: Clock },
   { index: '/help/parameters', label: '参数说明', icon: Document },
   { index: '/help/metrics', label: '指标科普', icon: TrendCharts },
@@ -214,10 +215,12 @@ const activePath = computed(() => {
   if (route.path.startsWith('/help')) return '/help/parameters'
   if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
   if (route.path.startsWith('/docs')) return '/docs/curl-to-openapi'
+  if (route.path.startsWith('/tests/custom-case')) return '/tests/custom-case'
   return '/tests/new'
 })
 const routeTitle = computed(() => route.meta?.title || {
   'new-test': '新建测试',
+  'custom-case': '自定义输入诊断',
   'run-test': '实时运行',
   'test-report': '报告详情',
   history: '历史记录',

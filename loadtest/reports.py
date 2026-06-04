@@ -10,6 +10,13 @@ from .models import RequestResult
 def render_markdown_report(summary: Dict[str, Any]) -> str:
     cfg = summary["config"]
     res = summary["results"]
+    prompt_source = "自定义输入 Case" if cfg.get("prompt_source") == "custom" else "系统合成 Prompt"
+    custom_prompt_lines = ""
+    if cfg.get("prompt_source") == "custom":
+        custom_prompt_lines = (
+            f"- 自定义输入字符数: **{cfg.get('custom_prompt_chars') or 0}**\n"
+            f"- Prompt SHA256: `{cfg.get('custom_prompt_sha256') or 'N/A'}`\n"
+        )
     conclusion: list[str] = []
     if res["success_rate"] >= 0.99:
         conclusion.append("服务在当前压测参数下整体稳定，成功率达到目标水平。")
@@ -56,9 +63,10 @@ def render_markdown_report(summary: Dict[str, Any]) -> str:
 - Model: `{cfg['model']}`
 - 并发数: **{cfg['concurrency']}**
 - 测试时长: **{cfg['duration_sec']} s**
+- 输入来源: **{prompt_source}**
 - 目标输入 tokens: **{cfg['input_tokens_target']}**
 - 实际输入 tokens: **{cfg['input_tokens_actual']}**
-- 最大输出 tokens: **{cfg['max_output_tokens']}**
+{custom_prompt_lines}- 最大输出 tokens: **{cfg['max_output_tokens']}**
 - 单请求超时: **{cfg['timeout_sec']} s**
 - 预热请求数: **{cfg['warmup_requests']}**
 - 流式模式: **{'启用' if cfg.get('enable_stream') else '禁用'}**
@@ -163,6 +171,16 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
     """生成交互式 HTML 可视化报告"""
     cfg = summary["config"]
     res = summary["results"]
+    prompt_source = "自定义输入 Case" if cfg.get("prompt_source") == "custom" else "系统合成 Prompt"
+    custom_prompt_html = ""
+    if cfg.get("prompt_source") == "custom":
+        custom_prompt_html = f"""
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-sm text-gray-600 mb-1">自定义输入</div>
+                <div class="text-3xl font-bold text-slate-700">{cfg.get('custom_prompt_chars') or 0}</div>
+                <div class="text-xs text-gray-500 mt-1">SHA256: {(cfg.get('custom_prompt_sha256') or 'N/A')[:16]}</div>
+            </div>
+        """
 
     success_details = [d for d in details if d.ok]
     if not success_details:
@@ -201,7 +219,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
 <body class="bg-gray-50 p-8">
     <div class="max-w-7xl mx-auto">
         <h1 class="text-4xl font-bold text-gray-900 mb-2">LLM API 压测报告</h1>
-        <p class="text-gray-600 mb-8">模型: {cfg['model']} | 并发: {cfg['concurrency']} | 时长: {cfg['duration_sec']}s</p>
+        <p class="text-gray-600 mb-8">模型: {cfg['model']} | 并发: {cfg['concurrency']} | 时长: {cfg['duration_sec']}s | 输入来源: {prompt_source}</p>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <div class="bg-white rounded-lg shadow p-6">
@@ -224,6 +242,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
                 <div class="text-3xl font-bold text-orange-600">{res.get('latency_sec_p95') or 0:.2f}s</div>
                 <div class="text-xs text-gray-500 mt-1">平均: {res.get('latency_sec_avg') or 0:.2f}s</div>
             </div>
+            {custom_prompt_html}
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

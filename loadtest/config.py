@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, fields
+import hashlib
 from typing import Any, Mapping
 
 
@@ -31,6 +32,8 @@ class LoadTestConfig:
     input_tokens_list: str = "60000,80000,100000"
     concurrency_list: str = "300,500,700"
     matrix_duration_sec: int = 300
+    prompt_source: str = "synthetic"
+    custom_prompt: str | None = None
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> "LoadTestConfig":
@@ -78,6 +81,8 @@ class LoadTestConfig:
         self.input_tokens_list = str(self.input_tokens_list or "")
         self.concurrency_list = str(self.concurrency_list or "")
         self.matrix_duration_sec = int(self.matrix_duration_sec)
+        self.prompt_source = str(self.prompt_source or "synthetic")
+        self.custom_prompt = None if self.custom_prompt is None else str(self.custom_prompt)
 
     def to_namespace(self) -> argparse.Namespace:
         return argparse.Namespace(**self.to_dict())
@@ -88,4 +93,20 @@ class LoadTestConfig:
     def safe_dict(self) -> dict[str, Any]:
         data = self.to_dict()
         data.pop("api_key", None)
+        data.update(self.prompt_metadata())
         return data
+
+    def prompt_metadata(self) -> dict[str, Any]:
+        if self.prompt_source != "custom" or self.custom_prompt is None:
+            return {
+                "prompt_source": self.prompt_source,
+                "custom_prompt": None,
+                "custom_prompt_chars": None,
+                "custom_prompt_sha256": None,
+            }
+        return {
+            "prompt_source": self.prompt_source,
+            "custom_prompt": self.custom_prompt,
+            "custom_prompt_chars": len(self.custom_prompt),
+            "custom_prompt_sha256": hashlib.sha256(self.custom_prompt.encode("utf-8")).hexdigest(),
+        }

@@ -93,7 +93,9 @@ function readInitialConfig() {
   const raw = sessionStorage.getItem('rerun_config')
   if (!raw) return null
   try {
-    return { ...JSON.parse(raw), api_key: '' }
+    const parsed = JSON.parse(raw)
+    if (parsed.prompt_source === 'custom') return null
+    return { ...parsed, api_key: '', prompt_source: 'synthetic', custom_prompt: null }
   } catch {
     return null
   }

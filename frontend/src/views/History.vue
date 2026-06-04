@@ -211,10 +211,14 @@ function copyRerun(row) {
     input_tokens: row.input_tokens,
     max_output_tokens: row.max_output_tokens,
     enable_stream: row.enable_stream,
-    matrix_mode: row.matrix_mode
+    matrix_mode: row.matrix_mode,
+    prompt_source: row.prompt_source || 'synthetic',
+    custom_prompt: row.custom_prompt || '',
+    custom_prompt_chars: row.custom_prompt_chars,
+    custom_prompt_sha256: row.custom_prompt_sha256
   }
   sessionStorage.setItem('rerun_config', JSON.stringify(copied))
-  router.push('/tests/new')
+  router.push(copied.prompt_source === 'custom' ? '/tests/custom-case' : '/tests/new')
 }
 
 function goCompare() {

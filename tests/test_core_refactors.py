@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import unittest
@@ -18,6 +19,7 @@ from backend.app.core.repository import Repository
 from backend.app.core.report_service import build_chart_data, load_chart_cache, load_details
 from backend.app.models.database import TestResult as DbTestResult
 from backend.app.models.database import TestTask as DbTestTask
+from backend.app.models.schemas import TestCreate
 from loadtest.chart_data import build_single_chart_data
 from loadtest.config import LoadTestConfig
 from loadtest.executor import RequestExecutor
@@ -25,6 +27,7 @@ from loadtest.metrics import percentile, percentile_metrics
 from loadtest.runner import LoadTestRunner
 from loadtest.models import RequestResult
 from loadtest.protocols import build_payload
+from loadtest.reports import render_html_report, render_markdown_report
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
 from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder
@@ -224,6 +227,135 @@ class MetricsAccumulatorTest(unittest.TestCase):
             self.assertEqual(len(items), 2)
             self.assertEqual(charts["detail_count"], 2)
             self.assertEqual(charts["failed_count"], 1)
+
+
+class CustomPromptConfigTest(unittest.TestCase):
+    def test_runner_uses_custom_prompt_and_counts_actual_tokens(self):
+        prompt = "请分析这条真实业务输入的首 token 延迟。"
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 1,
+            "input_tokens": 9999,
+            "warmup_requests": 0,
+            "enable_stream": False,
+            "prompt_source": "custom",
+            "custom_prompt": prompt,
+        })
+
+        self.assertEqual(runner.prompt, prompt)
+        self.assertEqual(runner.actual_input_tokens, runner.estimator.count(prompt))
+        self.assertNotEqual(runner.actual_input_tokens, 9999)
+
+    def test_runner_keeps_synthetic_prompt_default(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 1,
+            "input_tokens": 3,
+            "warmup_requests": 0,
+            "enable_stream": False,
+        })
+
+        self.assertEqual(runner.actual_input_tokens, 3)
+        self.assertNotEqual(runner.prompt, "")
+
+    def test_custom_prompt_metadata_is_saved_with_summary_config(self):
+        prompt = "custom ttft prompt"
+        config = LoadTestConfig(
+            duration_sec=10,
+            warmup_requests=0,
+            prompt_source="custom",
+            custom_prompt=prompt,
+        )
+        summary = MetricsAccumulator().build_summary(config, actual_input_tokens=4, started_at=0)
+
+        self.assertEqual(summary["config"]["prompt_source"], "custom")
+        self.assertEqual(summary["config"]["custom_prompt"], prompt)
+        self.assertEqual(summary["config"]["custom_prompt_chars"], len(prompt))
+        self.assertEqual(
+            summary["config"]["custom_prompt_sha256"],
+            hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        )
+
+    def test_custom_prompt_schema_rejects_empty_and_matrix_mode(self):
+        base = {
+            "api_key": "test-key",
+            "prompt_source": "custom",
+            "custom_prompt": "hello",
+        }
+
+        self.assertEqual(TestCreate(**base).custom_prompt, "hello")
+        with self.assertRaises(ValueError):
+            TestCreate(**{**base, "custom_prompt": "   "})
+        with self.assertRaises(ValueError):
+            TestCreate(**{**base, "matrix_mode": True})
+
+    def test_repository_persists_custom_prompt_metadata_and_redacts_api_key(self):
+        prompt = "保存完整自定义输入"
+        payload = TestCreate(
+            api_key="test-key",
+            prompt_source="custom",
+            custom_prompt=prompt,
+            concurrency=1,
+            duration_sec=10,
+            input_tokens=1,
+        )
+
+        class FakeSession:
+            def __init__(self):
+                self.task = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def add(self, item):
+                if isinstance(item, DbTestTask):
+                    self.task = item
+
+            def commit(self):
+                return None
+
+            def refresh(self, item):
+                return None
+
+        fake_session = FakeSession()
+        repository = Repository()
+        repository.session = lambda: fake_session
+
+        task = repository.create_task("task-custom", payload)
+        saved = json.loads(task.config_json)
+
+        self.assertNotIn("api_key", saved)
+        self.assertEqual(saved["custom_prompt"], prompt)
+        self.assertEqual(saved["custom_prompt_chars"], len(prompt))
+        self.assertEqual(saved["custom_prompt_sha256"], hashlib.sha256(prompt.encode("utf-8")).hexdigest())
+
+    def test_export_reports_show_custom_prompt_metadata(self):
+        prompt = "custom report prompt"
+        config = LoadTestConfig(
+            duration_sec=10,
+            warmup_requests=0,
+            prompt_source="custom",
+            custom_prompt=prompt,
+        )
+        summary = MetricsSummaryBuilder(config).build([result()], actual_input_tokens=4, started_at=0)
+
+        markdown = render_markdown_report(summary)
+        html = render_html_report(summary, [result()])
+
+        self.assertIn("输入来源: **自定义输入 Case**", markdown)
+        self.assertIn("自定义输入字符数", markdown)
+        self.assertIn(hashlib.sha256(prompt.encode("utf-8")).hexdigest(), markdown)
+        self.assertIn("输入来源: 自定义输入 Case", html)
+        self.assertIn("自定义输入", html)
 
 
 class RequestPayloadTemperatureTest(unittest.TestCase):

@@ -63,6 +63,7 @@ class MetricsSummaryBuilder:
                 "timeout_sec": self.config.timeout_sec,
                 "warmup_requests": self.config.warmup_requests,
                 "enable_stream": self.config.enable_stream,
+                **self.config.prompt_metadata(),
             },
             "results": {
                 "total_requests": len(results),
@@ -156,6 +157,7 @@ class MetricsAccumulator:
                 "timeout_sec": config.timeout_sec,
                 "warmup_requests": config.warmup_requests,
                 "enable_stream": config.enable_stream,
+                **config.prompt_metadata(),
             },
             "results": {
                 "total_requests": self.total_requests,

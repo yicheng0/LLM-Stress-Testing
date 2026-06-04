@@ -56,6 +56,8 @@ class WebLoadTestRunner:
             "input_tokens_list": self.config.get("input_tokens_list", ""),
             "concurrency_list": self.config.get("concurrency_list", ""),
             "matrix_duration_sec": int(self.config.get("matrix_duration_sec", 60)),
+            "prompt_source": self.config.get("prompt_source", "synthetic"),
+            "custom_prompt": self.config.get("custom_prompt"),
         })
         return config.to_namespace()
 

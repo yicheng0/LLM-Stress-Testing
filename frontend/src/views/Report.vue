@@ -36,9 +36,13 @@
           <el-descriptions-item label="并发">{{ config.concurrency || '-' }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ effectiveDuration }} 秒</el-descriptions-item>
           <el-descriptions-item label="流式">{{ config.enable_stream ? '开启' : '关闭' }}</el-descriptions-item>
-          <el-descriptions-item label="输入 Token 目标">{{ isMatrix ? '-' : number(config.input_tokens) }}</el-descriptions-item>
+          <el-descriptions-item label="输入来源">{{ promptSourceText }}</el-descriptions-item>
+          <el-descriptions-item label="输入 Token 目标">{{ isMatrix || isCustomPrompt ? '-' : number(config.input_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="最大输出 Token">{{ number(config.max_output_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="测试点">{{ isMatrix ? summary.test_points : '-' }}</el-descriptions-item>
+          <el-descriptions-item v-if="isCustomPrompt" label="自定义字符数">{{ number(config.custom_prompt_chars) }}</el-descriptions-item>
+          <el-descriptions-item v-if="isCustomPrompt" label="实际输入 Token">{{ number(summaryConfig.input_tokens_actual) }}</el-descriptions-item>
+          <el-descriptions-item v-if="isCustomPrompt" label="Prompt SHA256" :span="2">{{ shortHash(config.custom_prompt_sha256) }}</el-descriptions-item>
           <el-descriptions-item label="Base URL" :span="2">{{ config.base_url || '-' }}</el-descriptions-item>
           <el-descriptions-item label="Endpoint" :span="2">{{ config.endpoint || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -430,9 +434,15 @@ const matrixHeatmapMetrics = [
 
 const summary = computed(() => report.value?.summary || {})
 const config = computed(() => report.value?.config || summary.value?.config || {})
+const summaryConfig = computed(() => summary.value?.config || {})
 const results = computed(() => summary.value?.results || {})
 const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
+const isCustomPrompt = computed(() => config.value.prompt_source === 'custom' || summaryConfig.value.prompt_source === 'custom')
+const promptSourceText = computed(() => {
+  if (isCustomPrompt.value) return '自定义输入 Case'
+  return '系统合成 Prompt'
+})
 const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
 const expectedMetrics = computed(() => config.value.expected_metrics || summary.value?.config?.expected_metrics || null)
@@ -1178,7 +1188,7 @@ function copyRerun() {
   const copied = { ...config.value, name: `${config.value.name || 'LLM API 性能测试'} - 复跑` }
   delete copied.api_key
   sessionStorage.setItem('rerun_config', JSON.stringify(copied))
-  router.push('/tests/new')
+  router.push(isCustomPrompt.value ? '/tests/custom-case' : '/tests/new')
 }
 
 async function copyCustomerSummary() {
@@ -1227,6 +1237,11 @@ function percent(value) {
 function seconds(value) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
   return `${Number(value).toFixed(4)}s`
+}
+
+function shortHash(value) {
+  if (!value) return '-'
+  return value.length > 20 ? `${value.slice(0, 12)}...${value.slice(-8)}` : value
 }
 
 function formatTime(value) {

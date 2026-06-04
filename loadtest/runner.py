@@ -45,10 +45,8 @@ class LoadTestRunner:
         self.retain_results = retain_results
         self.estimator = TokenEstimator(self.config.model)
         self.prompt_factory = PromptFactory(self.estimator)
-        print(f"[*] 正在构建 {self.config.input_tokens} token 输入 prompt...", flush=True)
         self._prompt_cache: dict[int, tuple[str, int]] = {}
-        self.prompt, self.actual_input_tokens = self._prompt_for_tokens(self.config.input_tokens)
-        print(f"[*] Prompt 构建完成，实际 token 数: {self.actual_input_tokens}", flush=True)
+        self.prompt, self.actual_input_tokens = self._initial_prompt()
         self.stream_parser = SseStreamParser()
         self.executor = self._create_executor()
         self.results: List[RequestResult] = []
@@ -70,10 +68,20 @@ class LoadTestRunner:
         cached = self._prompt_cache.get(input_tokens)
         if cached:
             return cached
+        print(f"[*] 正在构建 {input_tokens} token 输入 prompt...", flush=True)
         prompt = self.prompt_factory.build_prompt(input_tokens)
         actual_input_tokens = self.estimator.count(prompt)
         self._prompt_cache[input_tokens] = (prompt, actual_input_tokens)
+        print(f"[*] Prompt 构建完成，实际 token 数: {actual_input_tokens}", flush=True)
         return prompt, actual_input_tokens
+
+    def _initial_prompt(self) -> tuple[str, int]:
+        if self.config.prompt_source == "custom":
+            prompt = self.config.custom_prompt or ""
+            actual_input_tokens = self.estimator.count(prompt)
+            print(f"[*] 使用自定义输入 case，字符数: {len(prompt)}，实际 token 数: {actual_input_tokens}", flush=True)
+            return prompt, actual_input_tokens
+        return self._prompt_for_tokens(self.config.input_tokens)
 
     def _create_executor(self) -> RequestExecutor:
         return RequestExecutor(

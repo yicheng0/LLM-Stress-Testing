@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 TaskStatus = Literal["queued", "running", "stopping", "completed", "failed", "cancelled", "interrupted"]
@@ -35,6 +35,17 @@ class TestCreate(BaseModel):
     concurrency_list: str = ""
     matrix_duration_sec: int = Field(default=60, ge=1, le=86400)
     expected_metrics: dict[str, Any] | None = None
+    prompt_source: Literal["synthetic", "custom"] = "synthetic"
+    custom_prompt: str | None = None
+
+    @model_validator(mode="after")
+    def validate_custom_prompt(self) -> "TestCreate":
+        if self.prompt_source == "custom":
+            if self.matrix_mode:
+                raise ValueError("自定义输入 case 不支持矩阵模式")
+            if not (self.custom_prompt or "").strip():
+                raise ValueError("自定义输入 case 不能为空")
+        return self
 
 
 class TestTaskOut(BaseModel):
@@ -52,6 +63,10 @@ class TestTaskOut(BaseModel):
     enable_stream: bool
     matrix_mode: bool
     expected_metrics: dict[str, Any] | None = None
+    prompt_source: str = "synthetic"
+    custom_prompt: str | None = None
+    custom_prompt_chars: int | None = None
+    custom_prompt_sha256: str | None = None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None

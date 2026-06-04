@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -42,6 +43,9 @@ def _redact_sensitive(data: Any) -> Any:
         for key, value in data.items():
             if key.lower() in {"api_key", "api-key", "authorization", "x-api-key", "x-goog-api-key"}:
                 continue
+            if key == "custom_prompt":
+                redacted[key] = value
+                continue
             redacted[key] = _redact_sensitive(value)
         return redacted
     if isinstance(data, list):
@@ -51,12 +55,24 @@ def _redact_sensitive(data: Any) -> Any:
     return data
 
 
+def _with_prompt_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    if data.get("prompt_source") != "custom":
+        data.setdefault("prompt_source", "synthetic")
+        data.setdefault("custom_prompt_chars", None)
+        data.setdefault("custom_prompt_sha256", None)
+        return data
+    prompt = str(data.get("custom_prompt") or "")
+    data["custom_prompt_chars"] = len(prompt)
+    data["custom_prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    return data
+
+
 class Repository:
     def session(self) -> Session:
         return SessionLocal()
 
     def create_task(self, task_id: str, payload: TestCreate) -> TestTask:
-        data = _redact_sensitive(_model_dump(payload))
+        data = _with_prompt_metadata(_redact_sensitive(_model_dump(payload)))
         now = datetime.utcnow()
         task = TestTask(
             id=task_id,
