@@ -49,11 +49,6 @@ The frontend can use:
 - `VITE_API_BASE_URL`: optional API base URL for non-proxy deployments
 - `VITE_WS_BASE_URL`: optional websocket base URL for non-proxy deployments
 
-The backend can use:
-
-- `SELF_UPDATE_ENABLED`: enable the version check/update panel action
-- `SELF_UPDATE_COMMAND`: optional custom update command when using the panel button
-
 API keys are submitted per test run. The backend removes `api_key` before persisting task configuration to the database and reports; do not put real keys in `.env.example`, docs, logs, or committed result files.
 
 ## State And Retention
@@ -71,17 +66,6 @@ With backend and frontend running:
 ```
 
 The smoke check verifies expected files/directories, backend health, test listing, and frontend reachability without creating a load-test task.
-
-## Versioned Commit Workflow
-
-After finishing a feature, stage only the source files that should be committed, then use the versioned commit script:
-
-```powershell
-git add frontend\src\components\ConfigForm.vue backend\app\models\schemas.py README.md
-.\scripts\commit_with_version.ps1 -Message "Add beginner load estimator"
-```
-
-The script bumps the patch version, syncs the frontend package files and backend API version, then creates the commit. Do not stage logs, `results/`, `frontend/dist/`, or `__pycache__/` files.
 
 ## Deployment Guide
 

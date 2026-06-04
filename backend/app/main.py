@@ -6,14 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.docs import router as docs_router
-from backend.app.api.system import router as system_router
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
 from backend.app.core.progress import ProgressHub
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import init_db
-from backend.app.version import APP_VERSION
 
 repository = Repository()
 progress_hub = ProgressHub()
@@ -27,7 +25,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="LLM API 性能测试平台", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="LLM API 性能测试平台", version="unversioned", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,7 +37,6 @@ app.add_middleware(
 
 app.include_router(tests_router)
 app.include_router(docs_router)
-app.include_router(system_router)
 app.include_router(websocket_router)
 
 

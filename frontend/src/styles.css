@@ -129,8 +129,7 @@ button,
   background: #f8fbff;
 }
 
-.info-block:nth-child(1),
-.info-block:nth-child(2) {
+.domain-block {
   flex: 0 0 auto;
 }
 
