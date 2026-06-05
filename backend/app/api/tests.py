@@ -15,7 +15,7 @@ from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
-from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, DetailsOut, EventOut, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
+from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, DetailsOut, EventOut, MatrixResumeRequest, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
@@ -57,6 +57,24 @@ def _config(task: TestTask) -> dict[str, Any]:
         return json.loads(task.config_json)
     except json.JSONDecodeError:
         return {}
+
+
+def _summary_from_file(result: TestResult | None) -> dict[str, Any] | None:
+    path = _safe_download_file(result.summary_path if result else None)
+    if not path:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _matrix_results_for_resume(result: TestResult | None) -> list[dict[str, Any]]:
+    summary = _safe_load_summary(result) or _summary_from_file(result)
+    if not summary or not summary.get("matrix"):
+        return []
+    points = summary.get("results_matrix")
+    return points if isinstance(points, list) else []
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -527,6 +545,47 @@ async def stop_test(task_id: str, manager: TaskManager = Depends(get_task_manage
     return {"test_id": task_id, "status": "stopping"}
 
 
+@router.post("/{task_id}/resume-matrix", response_model=StartTestOut)
+async def resume_matrix_test(
+    task_id: str,
+    payload: MatrixResumeRequest,
+    repository: Repository = Depends(get_repository),
+    manager: TaskManager = Depends(get_task_manager),
+) -> StartTestOut:
+    item = repository.get_task(task_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task, result = item
+    if not task.matrix_mode:
+        raise HTTPException(status_code=400, detail="非矩阵任务不能续跑")
+    if task.status not in {"completed", "failed", "cancelled", "interrupted"}:
+        raise HTTPException(status_code=400, detail="当前任务状态不能续跑")
+    existing_matrix_results = _matrix_results_for_resume(result)
+    if not existing_matrix_results:
+        raise HTTPException(status_code=400, detail="未找到可续跑的矩阵结果")
+
+    try:
+        new_task_id = await manager.resume_matrix_test(
+            task_id,
+            _config(task),
+            payload.api_key,
+            existing_matrix_results,
+            resume_policy=payload.resume_policy,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to resume matrix test")
+        raise HTTPException(status_code=502, detail=f"续跑矩阵失败：{exc}") from exc
+
+    new_item = repository.get_task(new_task_id)
+    if not new_item:
+        raise HTTPException(status_code=500, detail="续跑任务创建后无法读取")
+    new_task, _ = new_item
+    repository.add_event(new_task_id, "info", f"基于任务 {task_id} 续跑矩阵")
+    return StartTestOut(test_id=new_task.id, status=new_task.status, created_at=new_task.created_at)
+
+
 @router.delete("/{task_id}")
 async def delete_test(task_id: str, repository: Repository = Depends(get_repository)) -> dict[str, Any]:
     deleted = repository.delete_task(task_id)
@@ -558,6 +617,7 @@ async def get_report(task_id: str, repository: Repository = Depends(get_reposito
     events = [_event_out(event) for event in repository.list_events(task_id)]
     return ReportOut(
         test_id=task_id,
+        task_status=task.status,
         config=config,
         summary=summary,
         charts=charts,

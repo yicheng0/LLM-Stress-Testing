@@ -59,6 +59,41 @@ class TaskManager:
             self.stop_events.pop(task_id, None)
 
     async def start_test(self, payload: TestCreate) -> str:
+        return await self._start_test(payload)
+
+    async def resume_matrix_test(
+        self,
+        source_task_id: str,
+        source_config: dict[str, Any],
+        api_key: str,
+        existing_matrix_results: list[dict[str, Any]],
+        *,
+        resume_policy: str = "missing_or_failed",
+    ) -> str:
+        if not existing_matrix_results:
+            raise ValueError("未找到可续跑的矩阵结果")
+        config = {
+            **source_config,
+            "name": f"{source_config.get('name') or '矩阵测试'} - 续跑",
+            "matrix_mode": True,
+            "resume_from_task_id": source_task_id,
+            "resume_policy": resume_policy,
+        }
+        config["api_key"] = api_key
+        payload = TestCreate(**config)
+        return await self._start_test(
+            payload,
+            existing_matrix_results=existing_matrix_results,
+            resume_policy=resume_policy,
+        )
+
+    async def _start_test(
+        self,
+        payload: TestCreate,
+        *,
+        existing_matrix_results: list[dict[str, Any]] | None = None,
+        resume_policy: str = "missing_or_failed",
+    ) -> str:
         max_concurrency = payload.concurrency
         if payload.matrix_mode:
             input_tokens_list = _parse_csv_ints(payload.input_tokens_list, "input_tokens_list")
@@ -88,7 +123,15 @@ class TaskManager:
         self.stop_events[task_id] = stop_event
 
         config = _model_dump(payload)
-        task = asyncio.create_task(self._run_test(task_id, config, stop_event))
+        task = asyncio.create_task(
+            self._run_test(
+                task_id,
+                config,
+                stop_event,
+                existing_matrix_results=existing_matrix_results,
+                resume_policy=resume_policy,
+            )
+        )
         self.tasks[task_id] = task
         return task_id
 
@@ -103,7 +146,15 @@ class TaskManager:
         await self.progress_hub.publish_log(task_id, "warning", "用户请求停止任务")
         return True
 
-    async def _run_test(self, task_id: str, config: dict[str, Any], stop_event: asyncio.Event) -> None:
+    async def _run_test(
+        self,
+        task_id: str,
+        config: dict[str, Any],
+        stop_event: asyncio.Event,
+        *,
+        existing_matrix_results: list[dict[str, Any]] | None = None,
+        resume_policy: str = "missing_or_failed",
+    ) -> None:
         async def on_progress(data: dict[str, Any]) -> None:
             await self.progress_hub.publish_progress(task_id, data)
 
@@ -123,6 +174,8 @@ class TaskManager:
                 progress_callback=on_progress,
                 stop_event=stop_event,
                 log_callback=on_log,
+                existing_matrix_results=existing_matrix_results,
+                resume_policy=resume_policy,
             )
             result = await runner.run()
             files = result["files"]

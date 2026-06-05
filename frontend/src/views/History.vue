@@ -84,6 +84,7 @@
         @run="row => router.push(`/tests/${row.id}/run`)"
         @report="row => router.push(`/tests/${row.id}/report`)"
         @copy="copyRerun"
+        @resume-matrix="confirmResumeMatrix"
         @delete="confirmDelete"
         @selection-change="handleSelectionChange"
       />
@@ -109,7 +110,7 @@ import { ArrowDown, DataAnalysis, Delete, Download, RefreshLeft, Search } from '
 import EmptyState from '../components/EmptyState.vue'
 import HistoryTable from '../components/HistoryTable.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { deleteTest, deleteTests } from '../api/client'
+import { deleteTest, deleteTests, resumeMatrixTest } from '../api/client'
 import { useHistoryFilters } from '../composables/useHistoryFilters'
 import { openReportDownload } from '../composables/useReportDownload'
 import { useTestsStore } from '../stores/tests'
@@ -192,6 +193,39 @@ async function confirmBulkDelete() {
     ElMessage.error(error.message)
   } finally {
     bulkDeleting.value = false
+  }
+}
+
+async function confirmResumeMatrix(row) {
+  let apiKey = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `将基于「${row.name}」创建一个新的矩阵续跑任务，已成功的测试点会跳过，缺失或失败点会重跑。请输入本次续跑使用的 API Key。`,
+      '续跑矩阵',
+      {
+        confirmButtonText: '创建续跑任务',
+        cancelButtonText: '取消',
+        inputType: 'password',
+        inputPlaceholder: 'API Key',
+        inputValidator(value) {
+          return String(value || '').trim() ? true : '请输入 API Key'
+        }
+      }
+    )
+    apiKey = String(result.value || '').trim()
+  } catch {
+    return
+  }
+
+  try {
+    const started = await resumeMatrixTest(row.id, {
+      api_key: apiKey,
+      resume_policy: 'missing_or_failed'
+    })
+    ElMessage.success('矩阵续跑任务已创建')
+    router.push(`/tests/${started.test_id}/run`)
+  } catch (error) {
+    ElMessage.error(error.message)
   }
 }
 

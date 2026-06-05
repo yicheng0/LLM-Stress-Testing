@@ -37,6 +37,8 @@ class TestCreate(BaseModel):
     expected_metrics: dict[str, Any] | None = None
     prompt_source: Literal["synthetic", "custom"] = "synthetic"
     custom_prompt: str | None = None
+    resume_from_task_id: str | None = None
+    resume_policy: Literal["missing_or_failed"] | None = None
 
     @model_validator(mode="after")
     def validate_custom_prompt(self) -> "TestCreate":
@@ -89,6 +91,11 @@ class StartTestOut(BaseModel):
     created_at: datetime
 
 
+class MatrixResumeRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
+    resume_policy: Literal["missing_or_failed"] = "missing_or_failed"
+
+
 class EventOut(BaseModel):
     id: int
     level: str
@@ -98,6 +105,7 @@ class EventOut(BaseModel):
 
 class ReportOut(BaseModel):
     test_id: str
+    task_status: str
     config: dict[str, Any]
     summary: dict[str, Any] | None
     charts: dict[str, Any] | None = None

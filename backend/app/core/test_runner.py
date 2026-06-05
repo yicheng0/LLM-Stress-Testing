@@ -22,6 +22,8 @@ class WebLoadTestRunner:
         progress_callback: ProgressCallback | None = None,
         stop_event=None,
         log_callback: LogCallback | None = None,
+        existing_matrix_results: list[dict[str, Any]] | None = None,
+        resume_policy: str = "missing_or_failed",
     ) -> None:
         self.task_id = task_id
         self.config = config
@@ -29,6 +31,8 @@ class WebLoadTestRunner:
         self.progress_callback = progress_callback
         self.stop_event = stop_event
         self.log_callback = log_callback
+        self.existing_matrix_results = existing_matrix_results
+        self.resume_policy = resume_policy
 
     def to_namespace(self) -> argparse.Namespace:
         config = LoadTestConfig.from_mapping({
@@ -80,7 +84,10 @@ class WebLoadTestRunner:
         )
 
         if config.matrix_mode:
-            results_matrix = await tester.run_matrix()
+            results_matrix = await tester.run_matrix(
+                existing_matrix_results=self.existing_matrix_results,
+                resume_policy=self.resume_policy,
+            )
             summary = {
                 "config": config.safe_dict(),
                 "matrix": True,

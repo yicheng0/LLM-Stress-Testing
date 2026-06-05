@@ -12,6 +12,8 @@ LLM Stress Testing is a performance benchmarking and stress testing toolkit for 
 - **P50 Latency**: Median response latency
 - **P99 Latency**: Tail latency under high load
 
+Retry-inclusive metrics such as `attempt_tokens` and `attempt_tpm` estimate observable retry pressure: every attempt counts its input tokens, failed retry attempts do not infer hidden output tokens, and a successful response contributes output tokens once.
+
 ## Web Console Quick Start
 
 Backend:

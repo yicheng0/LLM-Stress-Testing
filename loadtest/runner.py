@@ -18,12 +18,37 @@ from .models import RequestResult
 from .prompt import PromptFactory, TokenEstimator
 from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_tokens, protocol_spec
 from .streaming import SseStreamParser
-from .summary import MetricsAccumulator
+from .summary import MetricsAccumulator, retry_attempt_count, retry_attempt_tokens
 
 ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
 ResultCallback = Callable[[RequestResult], None]
 T = TypeVar("T")
+RESUME_POLICY_MISSING_OR_FAILED = "missing_or_failed"
+
+
+def matrix_point_key(input_tokens: int, concurrency: int) -> str:
+    return f"{int(input_tokens)}:{int(concurrency)}"
+
+
+def matrix_result_key(result: dict[str, Any]) -> str | None:
+    matrix_config = result.get("matrix_config") or {}
+    try:
+        input_tokens = int(matrix_config["input_tokens"])
+        concurrency = int(matrix_config["concurrency"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return matrix_point_key(input_tokens, concurrency)
+
+
+def should_reuse_matrix_result(result: dict[str, Any], resume_policy: str = RESUME_POLICY_MISSING_OR_FAILED) -> bool:
+    if resume_policy != RESUME_POLICY_MISSING_OR_FAILED:
+        return False
+    metrics = result.get("results") or {}
+    total_requests = int(metrics.get("total_requests") or 0)
+    successful_requests = int(metrics.get("successful_requests") or 0)
+    success_rate = float(metrics.get("success_rate") or 0)
+    return total_requests > 0 and successful_requests > 0 and success_rate > 0
 
 
 class LoadTestRunner:
@@ -178,11 +203,9 @@ class LoadTestRunner:
         if self.result_callback:
             self.result_callback(result)
         self.metrics_accumulator.record(result)
-        attempt_count = max(1, int(result.retry_count or 0) + 1)
+        attempt_count = retry_attempt_count(result)
         self._attempt_count += attempt_count
-        self._attempt_token_count += result.input_tokens * attempt_count
-        if result.ok:
-            self._attempt_token_count += result.output_tokens
+        self._attempt_token_count += retry_attempt_tokens(result)
         if result.ok:
             self._success_count += 1
             self._success_token_count += result.total_tokens
@@ -389,10 +412,20 @@ class LoadTestRunner:
         await self.emit_log("info", "压测结束，正在汇总结果")
         return self.summarize()
 
-    async def run_matrix(self) -> list[Dict[str, Any]]:
+    async def run_matrix(
+        self,
+        *,
+        existing_matrix_results: list[dict[str, Any]] | None = None,
+        resume_policy: str = RESUME_POLICY_MISSING_OR_FAILED,
+    ) -> list[Dict[str, Any]]:
         input_tokens_list = [int(x.strip()) for x in self.config.input_tokens_list.split(",")]
         concurrency_list = [int(x.strip()) for x in self.config.concurrency_list.split(",")]
         results_matrix = []
+        reusable_results = {
+            key: {**result, "matrix_resume_source": "existing"}
+            for result in (existing_matrix_results or [])
+            if (key := matrix_result_key(result)) and should_reuse_matrix_result(result, resume_policy)
+        }
         total_tests = len(input_tokens_list) * len(concurrency_list)
         current_test = 0
         print(f"[*] 矩阵测试模式：{len(input_tokens_list)} 个输入规模 × {len(concurrency_list)} 个并发级别 = {total_tests} 个测试点")
@@ -404,6 +437,19 @@ class LoadTestRunner:
                     await self.emit_log("warning", "矩阵测试收到停止信号，跳过剩余测试点")
                     break
                 current_test += 1
+                point_key = matrix_point_key(input_tokens, concurrency)
+                existing_result = reusable_results.get(point_key)
+                if existing_result is not None:
+                    existing_result["matrix_config"] = {
+                        **(existing_result.get("matrix_config") or {}),
+                        "input_tokens": input_tokens,
+                        "concurrency": concurrency,
+                        "test_index": current_test,
+                        "total_tests": total_tests,
+                    }
+                    results_matrix.append(existing_result)
+                    await self.emit_log("info", f"跳过已完成测试点 {input_tokens}/{concurrency}")
+                    continue
                 print(f"\n{'='*80}")
                 print(f"[*] 测试点 {current_test}/{total_tests}: 输入={input_tokens} tokens, 并发={concurrency}")
                 print(f"{'='*80}\n")
@@ -436,6 +482,8 @@ class LoadTestRunner:
                     "test_index": current_test,
                     "total_tests": total_tests,
                 }
+                if existing_matrix_results:
+                    summary["matrix_resume_source"] = "rerun"
                 results_matrix.append(summary)
                 self.config.input_tokens = config_snapshot["input_tokens"]
                 self.config.concurrency = config_snapshot["concurrency"]

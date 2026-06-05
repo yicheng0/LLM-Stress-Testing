@@ -63,6 +63,13 @@ export function stopTest(id) {
   return request(`/api/tests/${id}/stop`, { method: 'POST' })
 }
 
+export function resumeMatrixTest(id, payload) {
+  return request(`/api/tests/${id}/resume-matrix`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
 export function deleteTest(id) {
   return request(`/api/tests/${id}`, { method: 'DELETE' })
 }

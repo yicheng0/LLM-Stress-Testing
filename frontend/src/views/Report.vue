@@ -8,6 +8,7 @@
         <div class="toolbar">
           <el-button :icon="Monitor" @click="router.push(`/tests/${id}/run`)">运行页</el-button>
           <el-button :icon="CopyDocument" @click="copyRerun">复制配置</el-button>
+          <el-button v-if="canResumeMatrix" :icon="RefreshRight" @click="confirmResumeMatrix">续跑矩阵</el-button>
           <el-button :icon="Delete" type="danger" plain @click="confirmDeleteReport">删除本次数据</el-button>
           <el-dropdown trigger="click" :disabled="!downloadItems.length" @command="openDownload">
             <el-button type="primary" :icon="Download">
@@ -392,13 +393,13 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, CopyDocument, Delete, Download, Monitor, Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, CopyDocument, Delete, Download, Monitor, Refresh, RefreshRight } from '@element-plus/icons-vue'
 import ChartPanel from '../components/ChartPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import MetricCards from '../components/MetricCards.vue'
 import MetricsTable from '../components/MetricsTable.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { deleteTest, getDetails, getReport } from '../api/client'
+import { deleteTest, getDetails, getReport, resumeMatrixTest } from '../api/client'
 import { openReportDownload } from '../composables/useReportDownload'
 
 const props = defineProps({
@@ -438,6 +439,9 @@ const summaryConfig = computed(() => summary.value?.config || {})
 const results = computed(() => summary.value?.results || {})
 const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
+const canResumeMatrix = computed(() => (
+  isMatrix.value && ['completed', 'failed', 'cancelled', 'interrupted'].includes(report.value?.task_status)
+))
 const isCustomPrompt = computed(() => config.value.prompt_source === 'custom' || summaryConfig.value.prompt_source === 'custom')
 const promptSourceText = computed(() => {
   if (isCustomPrompt.value) return '自定义输入 Case'
@@ -1214,6 +1218,39 @@ async function confirmDeleteReport() {
     await deleteTest(props.id)
     ElMessage.success('已删除本次数据')
     router.push('/history')
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+async function confirmResumeMatrix() {
+  let apiKey = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      '将创建一个新的矩阵续跑任务，已成功的测试点会跳过，缺失或失败点会重跑。请输入本次续跑使用的 API Key。',
+      '续跑矩阵',
+      {
+        confirmButtonText: '创建续跑任务',
+        cancelButtonText: '取消',
+        inputType: 'password',
+        inputPlaceholder: 'API Key',
+        inputValidator(value) {
+          return String(value || '').trim() ? true : '请输入 API Key'
+        }
+      }
+    )
+    apiKey = String(result.value || '').trim()
+  } catch {
+    return
+  }
+
+  try {
+    const started = await resumeMatrixTest(props.id, {
+      api_key: apiKey,
+      resume_policy: 'missing_or_failed'
+    })
+    ElMessage.success('矩阵续跑任务已创建')
+    router.push(`/tests/${started.test_id}/run`)
   } catch (error) {
     ElMessage.error(error.message)
   }

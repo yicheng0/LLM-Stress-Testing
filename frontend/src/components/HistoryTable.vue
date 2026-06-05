@@ -40,6 +40,7 @@
               <el-dropdown-menu>
                 <el-dropdown-item command="run" :icon="Monitor">运行页</el-dropdown-item>
                 <el-dropdown-item command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
+                <el-dropdown-item v-if="canResumeMatrix(row)" command="resume-matrix" :icon="RefreshRight">续跑矩阵</el-dropdown-item>
                 <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -86,6 +87,7 @@
                 <el-dropdown-menu>
                   <el-dropdown-item command="run" :icon="Monitor">运行页</el-dropdown-item>
                   <el-dropdown-item command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
+                  <el-dropdown-item v-if="canResumeMatrix(row)" command="resume-matrix" :icon="RefreshRight">续跑矩阵</el-dropdown-item>
                   <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -99,7 +101,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { CopyDocument, DataAnalysis, Delete, Monitor, MoreFilled } from '@element-plus/icons-vue'
+import { CopyDocument, DataAnalysis, Delete, Monitor, MoreFilled, RefreshRight } from '@element-plus/icons-vue'
 
 const props = defineProps({
   items: {
@@ -112,7 +114,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['run', 'report', 'copy', 'delete', 'selection-change'])
+const emit = defineEmits(['run', 'report', 'copy', 'delete', 'resume-matrix', 'selection-change'])
 const selectedMobileIds = ref([])
 
 const statusNames = {
@@ -202,6 +204,10 @@ function protocolText(protocol) {
 
 function handleCommand(command, row) {
   emit(command, row)
+}
+
+function canResumeMatrix(row) {
+  return Boolean(row.matrix_mode && ['completed', 'failed', 'cancelled', 'interrupted'].includes(row.status))
 }
 
 function isMobileSelected(row) {

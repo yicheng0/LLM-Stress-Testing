@@ -7,6 +7,9 @@ import time
 import unittest
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
+
+from backend.app.api import tests as tests_api
 from backend.app.core.task_status import (
     TaskStatus,
     can_transition_task_status,
@@ -24,13 +27,13 @@ from loadtest.chart_data import build_single_chart_data
 from loadtest.config import LoadTestConfig
 from loadtest.executor import RequestExecutor
 from loadtest.metrics import percentile, percentile_metrics
-from loadtest.runner import LoadTestRunner
+from loadtest.runner import LoadTestRunner, matrix_result_key, should_reuse_matrix_result
 from loadtest.models import RequestResult
 from loadtest.protocols import build_payload
 from loadtest.reports import render_html_report, render_markdown_report
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
-from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder
+from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder, retry_attempt_tokens
 from test_glm_features import _chat_url
 
 
@@ -186,7 +189,11 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertEqual(results_summary["total_requests"], 2)
         self.assertEqual(results_summary["successful_requests"], 2)
         self.assertEqual(results_summary["attempt_requests"], 4)
-        self.assertEqual(results_summary["attempt_tokens"], 500)
+        self.assertEqual(retry_attempt_tokens(results[0]), 320)
+        self.assertEqual(retry_attempt_tokens(results[1]), 120)
+        self.assertEqual(results_summary["attempt_tokens"], 440)
+        legacy_summary = MetricsSummaryBuilder(config).build(results, actual_input_tokens=100, started_at=0)
+        self.assertEqual(legacy_summary["results"]["attempt_tokens"], results_summary["attempt_tokens"])
         self.assertGreater(results_summary["attempt_rpm"], results_summary["rpm"])
         self.assertGreater(results_summary["attempt_tpm"], results_summary["total_tpm"])
 
@@ -356,6 +363,216 @@ class CustomPromptConfigTest(unittest.TestCase):
         self.assertIn(hashlib.sha256(prompt.encode("utf-8")).hexdigest(), markdown)
         self.assertIn("输入来源: 自定义输入 Case", html)
         self.assertIn("自定义输入", html)
+
+
+class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
+    def _task(self, task_id: str, *, matrix_mode: bool, status: str = "completed") -> DbTestTask:
+        return DbTestTask(
+            id=task_id,
+            name="matrix",
+            api_protocol="openai",
+            base_url="https://example.com",
+            endpoint="/v1/chat/completions",
+            model="gpt-5.5",
+            status=status,
+            concurrency=50,
+            duration_sec=60,
+            input_tokens=1000,
+            max_output_tokens=128,
+            enable_stream=True,
+            matrix_mode=matrix_mode,
+            config_json=json.dumps({
+                "name": "matrix",
+                "api_protocol": "openai",
+                "base_url": "https://example.com",
+                "endpoint": "/v1/chat/completions",
+                "model": "gpt-5.5",
+                "concurrency": 50,
+                "duration_sec": 60,
+                "input_tokens": 1000,
+                "max_output_tokens": 128,
+                "enable_stream": True,
+                "matrix_mode": matrix_mode,
+                "input_tokens_list": "1000,2000",
+                "concurrency_list": "50",
+            }, ensure_ascii=False),
+            created_at=datetime.now(UTC),
+        )
+
+    def test_reuse_policy_keeps_successful_points_only(self):
+        successful = {
+            "matrix_config": {"input_tokens": 1000, "concurrency": 50},
+            "results": {"total_requests": 3, "successful_requests": 1, "success_rate": 33.3},
+        }
+        failed = {
+            "matrix_config": {"input_tokens": 2000, "concurrency": 50},
+            "results": {"total_requests": 3, "successful_requests": 0, "success_rate": 0},
+        }
+        empty = {
+            "matrix_config": {"input_tokens": 3000, "concurrency": 50},
+            "results": {"total_requests": 0, "successful_requests": 0, "success_rate": 0},
+        }
+
+        self.assertTrue(should_reuse_matrix_result(successful))
+        self.assertFalse(should_reuse_matrix_result(failed))
+        self.assertFalse(should_reuse_matrix_result(empty))
+        self.assertEqual(matrix_result_key(successful), "1000:50")
+
+    async def test_run_matrix_skips_successful_points_and_reruns_failed_or_missing_points(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "input_tokens": 1000,
+            "concurrency": 50,
+            "matrix_mode": True,
+            "input_tokens_list": "1000,2000,3000",
+            "concurrency_list": "50",
+            "matrix_duration_sec": 1,
+            "warmup_requests": 0,
+            "enable_stream": False,
+        })
+        existing_success = {
+            "matrix_config": {"input_tokens": 1000, "concurrency": 50},
+            "results": {"total_requests": 2, "successful_requests": 2, "success_rate": 100.0},
+        }
+        existing_failed = {
+            "matrix_config": {"input_tokens": 2000, "concurrency": 50},
+            "results": {"total_requests": 2, "successful_requests": 0, "success_rate": 0.0},
+        }
+        calls = []
+
+        async def fake_run():
+            calls.append((runner.config.input_tokens, runner.config.concurrency))
+            return {
+                "results": {"total_requests": 1, "successful_requests": 1, "success_rate": 100.0},
+            }
+
+        runner.run = fake_run
+        runner._prompt_for_tokens = lambda tokens: (f"prompt {tokens}", tokens)
+        runner._sleep_or_stop = lambda seconds: asyncio.sleep(0, result=True)
+
+        results = await runner.run_matrix(existing_matrix_results=[existing_success, existing_failed])
+
+        self.assertEqual(calls, [(2000, 50), (3000, 50)])
+        self.assertEqual([matrix_result_key(item) for item in results], ["1000:50", "2000:50", "3000:50"])
+        self.assertEqual([item["matrix_resume_source"] for item in results], ["existing", "rerun", "rerun"])
+        self.assertEqual([item["matrix_config"]["test_index"] for item in results], [1, 2, 3])
+        self.assertEqual([item["matrix_config"]["total_tests"] for item in results], [3, 3, 3])
+        self.assertEqual(runner.config.input_tokens, 1000)
+        self.assertEqual(runner.config.concurrency, 50)
+
+    async def test_resume_api_rejects_non_matrix_tasks(self):
+        class FakeRepository:
+            def get_task(self, task_id):
+                return self_task, None
+
+        self_task = self._task("single-task", matrix_mode=False)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await tests_api.resume_matrix_test(
+                "single-task",
+                tests_api.MatrixResumeRequest(api_key="test-key"),
+                repository=FakeRepository(),
+                manager=object(),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "非矩阵任务不能续跑")
+
+    async def test_resume_api_starts_new_task_from_existing_matrix_summary(self):
+        existing_point = {
+            "matrix_config": {"input_tokens": 1000, "concurrency": 50},
+            "results": {"total_requests": 1, "successful_requests": 1, "success_rate": 100.0},
+        }
+        source_task = self._task("source-task", matrix_mode=True)
+        source_result = DbTestResult(
+            task_id="source-task",
+            summary_json=json.dumps({"matrix": True, "results_matrix": [existing_point]}, ensure_ascii=False),
+        )
+        new_task = self._task("new-task", matrix_mode=True, status="queued")
+
+        class FakeRepository:
+            def __init__(self):
+                self.events = []
+
+            def get_task(self, task_id):
+                if task_id == "source-task":
+                    return source_task, source_result
+                if task_id == "new-task":
+                    return new_task, None
+                return None
+
+            def add_event(self, task_id, level, message):
+                self.events.append((task_id, level, message))
+
+        class FakeManager:
+            def __init__(self):
+                self.call = None
+
+            async def resume_matrix_test(self, *args, **kwargs):
+                self.call = (args, kwargs)
+                return "new-task"
+
+        repository = FakeRepository()
+        manager = FakeManager()
+
+        response = await tests_api.resume_matrix_test(
+            "source-task",
+            tests_api.MatrixResumeRequest(api_key="test-key"),
+            repository=repository,
+            manager=manager,
+        )
+
+        self.assertEqual(response.test_id, "new-task")
+        self.assertEqual(response.status, "queued")
+        self.assertEqual(manager.call[0][0], "source-task")
+        self.assertEqual(manager.call[0][2], "test-key")
+        self.assertEqual(manager.call[0][3], [existing_point])
+        self.assertEqual(manager.call[1]["resume_policy"], "missing_or_failed")
+        self.assertEqual(repository.events[0][0], "new-task")
+        self.assertIn("source-task", repository.events[0][2])
+
+    def test_repository_redacts_api_key_from_resume_config(self):
+        payload = TestCreate(
+            api_key="resume-secret-key",
+            matrix_mode=True,
+            resume_from_task_id="source-task",
+            resume_policy="missing_or_failed",
+            input_tokens_list="1000",
+            concurrency_list="50",
+        )
+
+        class FakeSession:
+            def __init__(self):
+                self.task = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def add(self, item):
+                if isinstance(item, DbTestTask):
+                    self.task = item
+
+            def commit(self):
+                return None
+
+            def refresh(self, item):
+                return None
+
+        fake_session = FakeSession()
+        repository = Repository()
+        repository.session = lambda: fake_session
+
+        repository.create_task("resume-task", payload)
+        saved = json.loads(fake_session.task.config_json)
+
+        self.assertNotIn("api_key", saved)
+        self.assertEqual(saved["resume_from_task_id"], "source-task")
+        self.assertEqual(saved["resume_policy"], "missing_or_failed")
 
 
 class RequestPayloadTemperatureTest(unittest.TestCase):
