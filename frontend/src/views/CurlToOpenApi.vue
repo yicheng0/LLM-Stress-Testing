@@ -2,11 +2,11 @@
   <div class="doc-page">
     <div class="section">
       <div class="section-header">
-        <h2 class="section-title">官方 curl 转 Apifox 文档</h2>
+        <h2 class="section-title">官方 curl 转内部 curl</h2>
         <div class="toolbar">
           <el-button :icon="Back" @click="router.push('/dashboard/realtime')">返回实时面板</el-button>
-          <el-button type="primary" :icon="Download" :disabled="!result?.openapi_yaml" @click="downloadYaml">
-            下载 openapi.yaml
+          <el-button type="primary" :icon="CopyDocument" :disabled="!result?.sanitized_curl" @click="copyCurl">
+            复制转换结果
           </el-button>
         </div>
       </div>
@@ -54,7 +54,7 @@
             <div class="action-row">
               <el-button :icon="RefreshLeft" @click="reset">清空</el-button>
               <el-button type="primary" :icon="DocumentChecked" :loading="loading" @click="convert">
-                生成 OpenAPI
+                生成可复制 curl
               </el-button>
             </div>
           </div>
@@ -88,35 +88,38 @@
 
             <div class="preview-card">
               <div class="preview-title">
-                <strong>参数识别</strong>
-                <span class="muted">未确认参数会保留在 YAML 示例中</span>
+                <strong>请求体字段</strong>
+                <span class="muted">所有字段会原样保留到转换结果</span>
               </div>
               <div class="param-block">
-                <div>
-                  <span>已识别参数</span>
-                  <div class="tag-list">
-                    <el-tag v-for="item in result?.recognized_params || []" :key="item" type="success" effect="plain">
-                      {{ item }}
-                    </el-tag>
-                    <em v-if="!result?.recognized_params?.length">-</em>
-                  </div>
+                <span>Body 顶层字段</span>
+                <div class="tag-list">
+                  <el-tag v-for="item in result?.recognized_params || []" :key="item" type="success" effect="plain">
+                    {{ item }}
+                  </el-tag>
+                  <em v-if="!result?.recognized_params?.length">生成后展示请求体字段。</em>
                 </div>
-                <div>
-                  <span>保留但需确认</span>
-                  <div class="tag-list">
-                    <el-tag v-for="item in result?.unknown_params || []" :key="item" type="warning" effect="plain">
-                      {{ item }}
-                    </el-tag>
-                    <em v-if="!result?.unknown_params?.length">-</em>
-                  </div>
+              </div>
+            </div>
+
+            <div class="preview-card">
+              <div class="preview-title">
+                <strong>保留 Header</strong>
+                <span class="muted">鉴权已脱敏，Content-Type 由请求体声明</span>
+              </div>
+              <div class="header-list">
+                <div v-for="header in result?.headers || []" :key="header.name" class="header-row">
+                  <code>{{ header.name }}</code>
+                  <span>{{ header.value }}</span>
                 </div>
+                <em v-if="!result?.headers?.length">生成后展示安全保留的请求头。</em>
               </div>
             </div>
 
             <el-alert
               v-if="result?.warnings?.length"
               class="warning-box"
-              title="导入前请确认"
+              title="复制前请确认"
               type="warning"
               :closable="false"
               show-icon
@@ -128,22 +131,12 @@
 
             <div class="preview-card">
               <div class="preview-title">
-                <strong>内部 curl</strong>
+                <strong>转换结果</strong>
                 <el-button size="small" :icon="CopyDocument" :disabled="!result?.sanitized_curl" @click="copyCurl">
                   复制
                 </el-button>
               </div>
               <pre class="code-box">{{ result?.sanitized_curl || '生成后展示脱敏 curl，API Key 会替换为 ${API_KEY}。' }}</pre>
-            </div>
-
-            <div class="preview-card">
-              <div class="preview-title">
-                <strong>OpenAPI YAML</strong>
-                <el-button size="small" :icon="Download" :disabled="!result?.openapi_yaml" @click="downloadYaml">
-                  下载
-                </el-button>
-              </div>
-              <pre class="code-box yaml-box">{{ result?.openapi_yaml || '生成后展示可导入 Apifox 的 OpenAPI YAML。' }}</pre>
             </div>
           </div>
         </div>
@@ -156,7 +149,7 @@
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { Back, CopyDocument, DocumentChecked, Download, RefreshLeft } from '@element-plus/icons-vue'
+import { Back, CopyDocument, DocumentChecked, RefreshLeft } from '@element-plus/icons-vue'
 import { convertCurlToOpenApi } from '../api/client'
 
 const router = useRouter()
@@ -165,7 +158,7 @@ const result = ref(null)
 
 const form = reactive({
   base_url: 'https://api.wenwen-ai.com',
-  title: 'LLM API 接口文档',
+  title: 'LLM API curl 转换',
   curl: ''
 })
 
@@ -246,9 +239,9 @@ async function convert() {
     result.value = await convertCurlToOpenApi({
       curl: form.curl,
       base_url: form.base_url,
-      title: form.title || 'LLM API 接口文档'
+      title: form.title || 'LLM API curl 转换'
     })
-    ElMessage.success('OpenAPI YAML 已生成')
+    ElMessage.success('可复制 curl 已生成')
   } catch (error) {
     ElMessage.error(error.message || '生成失败')
   } finally {
@@ -275,20 +268,7 @@ function authLabel(protocol) {
 async function copyCurl() {
   if (!result.value?.sanitized_curl) return
   await navigator.clipboard.writeText(result.value.sanitized_curl)
-  ElMessage.success('已复制脱敏 curl')
-}
-
-function downloadYaml() {
-  if (!result.value?.openapi_yaml) return
-  const blob = new Blob([result.value.openapi_yaml], { type: 'application/yaml;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'openapi.yaml'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  ElMessage.success('已复制转换后的 curl')
 }
 </script>
 
@@ -417,10 +397,47 @@ function downloadYaml() {
 }
 
 .param-block {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
   padding: 14px;
+}
+
+.header-list {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.header-list em {
+  color: #94a3b8;
+  font-style: normal;
+}
+
+.header-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.38fr) minmax(0, 0.62fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #edf2f7;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.header-row code,
+.header-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.header-row code {
+  color: #1d4ed8;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.header-row span {
+  color: #334155;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 12px;
 }
 
 .tag-list {
@@ -458,16 +475,34 @@ function downloadYaml() {
   word-break: break-word;
 }
 
-.yaml-box {
-  max-height: 420px;
-}
-
 @media (max-width: 1180px) {
   .doc-layout,
   .template-row,
   .result-grid,
-  .param-block {
+  .param-block,
+  .header-row {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .section-header,
+  .toolbar,
+  .action-row,
+  .preview-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar,
+  .action-row {
+    width: 100%;
+  }
+
+  .toolbar :deep(.el-button),
+  .action-row :deep(.el-button) {
+    width: 100%;
+    margin-left: 0;
   }
 }
 </style>

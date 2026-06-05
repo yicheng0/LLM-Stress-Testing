@@ -136,8 +136,10 @@ class CurlConvertOut(BaseModel):
     method: str
     endpoint: str
     model: str | None = None
+    headers: list[dict[str, str]]
     sanitized_curl: str
     openapi_yaml: str
     recognized_params: list[str]
     unknown_params: list[str]
     warnings: list[str]
+

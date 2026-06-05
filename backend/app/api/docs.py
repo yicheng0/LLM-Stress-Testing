@@ -24,6 +24,7 @@ async def convert_curl(payload: CurlConvertRequest) -> CurlConvertOut:
         method=converted.method,
         endpoint=converted.endpoint,
         model=converted.model,
+        headers=converted.headers,
         sanitized_curl=converted.sanitized_curl,
         openapi_yaml=converted.openapi_yaml,
         recognized_params=converted.recognized_params,
