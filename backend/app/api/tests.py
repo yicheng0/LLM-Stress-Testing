@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -15,7 +17,7 @@ from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
-from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, DetailsOut, EventOut, MatrixResumeRequest, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
+from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, CustomCaseBatchFailure, CustomCaseBatchOut, CustomCaseBatchRequest, DetailsOut, EventOut, MatrixResumeRequest, ReportOut, StartTestOut, TestCreate, TestListOut, TestTaskOut
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
@@ -84,6 +86,36 @@ def _num(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _estimate_prompt_tokens(prompt: str) -> int:
+    cjk = len(re.findall(r"[\u3400-\u9fff]", prompt))
+    non_cjk = max(0, len(prompt) - cjk)
+    return max(1, int(cjk * 1.1 + non_cjk / 4 + 0.999))
+
+
+def _custom_case_expected_metrics(
+    *,
+    prompt: str,
+    concurrency: int,
+    duration_sec: int,
+    max_output_tokens: int,
+    think_time_ms: int,
+) -> dict[str, float]:
+    input_tokens = _estimate_prompt_tokens(prompt)
+    effective_latency_sec = max(0.001, 10 + think_time_ms / 1000)
+    expected_rpm = concurrency / effective_latency_sec * 60
+    expected_requests = expected_rpm * duration_sec / 60
+    expected_tpm = expected_rpm * (input_tokens + max_output_tokens)
+    return {
+        "expected_rpm": expected_rpm,
+        "expected_tpm": expected_tpm,
+        "expected_tps": expected_tpm / 60,
+        "expected_requests": expected_requests,
+        "expected_input_token_total": expected_requests * input_tokens,
+        "expected_output_token_limit": expected_requests * max_output_tokens,
+        "expected_latency_sec": 10,
+    }
 
 
 def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
@@ -377,6 +409,84 @@ async def start_test(
         raise HTTPException(status_code=500, detail="任务创建后无法读取")
     task, _ = item
     return StartTestOut(test_id=task.id, status=task.status, created_at=task.created_at)
+
+
+@router.post("/custom-case-batch", response_model=CustomCaseBatchOut)
+async def start_custom_case_batch(
+    payload: CustomCaseBatchRequest,
+    manager: TaskManager = Depends(get_task_manager),
+) -> CustomCaseBatchOut:
+    batch_id = str(uuid4())
+    total = len(payload.cases) * len(payload.channels)
+    test_ids: list[str] = []
+    failures: list[CustomCaseBatchFailure] = []
+    common = {
+        "concurrency": payload.concurrency,
+        "duration_sec": payload.duration_sec,
+        "max_output_tokens": payload.max_output_tokens,
+        "temperature": payload.temperature,
+        "timeout_sec": payload.timeout_sec,
+        "connect_timeout_sec": payload.connect_timeout_sec,
+        "warmup_requests": payload.warmup_requests,
+        "max_retries": payload.max_retries,
+        "retry_backoff_base": payload.retry_backoff_base,
+        "retry_backoff_max": payload.retry_backoff_max,
+        "think_time_ms": payload.think_time_ms,
+        "enable_stream": payload.enable_stream,
+    }
+
+    for case_index, case in enumerate(payload.cases, start=1):
+        prompt = case.prompt.strip()
+        for channel_index, channel in enumerate(payload.channels, start=1):
+            try:
+                item = TestCreate(
+                    **common,
+                    name=f"{payload.batch_name} / {case.name} / {channel.name}",
+                    api_protocol=channel.api_protocol,
+                    anthropic_version=channel.anthropic_version,
+                    base_url=channel.base_url,
+                    api_key=channel.api_key,
+                    model=channel.model,
+                    endpoint=channel.endpoint,
+                    input_tokens=max(1, _estimate_prompt_tokens(prompt)),
+                    matrix_mode=False,
+                    input_tokens_list="",
+                    concurrency_list="",
+                    matrix_duration_sec=60,
+                    prompt_source="custom",
+                    custom_prompt=prompt,
+                    expected_metrics=_custom_case_expected_metrics(
+                        prompt=prompt,
+                        concurrency=payload.concurrency,
+                        duration_sec=payload.duration_sec,
+                        max_output_tokens=payload.max_output_tokens,
+                        think_time_ms=payload.think_time_ms,
+                    ),
+                    batch_id=batch_id,
+                    batch_name=payload.batch_name,
+                    batch_case_name=case.name,
+                    batch_case_index=case_index,
+                    batch_channel_name=channel.name,
+                    batch_channel_index=channel_index,
+                    batch_total_tests=total,
+                )
+                test_ids.append(await manager.start_test(item))
+            except ValueError as exc:
+                failures.append(CustomCaseBatchFailure(case_name=case.name, channel_name=channel.name, message=str(exc)))
+            except Exception as exc:
+                logger.exception("Failed to start custom case batch item")
+                failures.append(CustomCaseBatchFailure(case_name=case.name, channel_name=channel.name, message=f"启动失败：{exc}"))
+
+    if not test_ids and failures:
+        raise HTTPException(status_code=400, detail="批量诊断启动失败：" + "；".join(item.message for item in failures[:3]))
+    return CustomCaseBatchOut(
+        batch_id=batch_id,
+        batch_name=payload.batch_name,
+        total=total,
+        started=len(test_ids),
+        test_ids=test_ids,
+        failures=failures,
+    )
 
 
 @router.get("", response_model=TestListOut)

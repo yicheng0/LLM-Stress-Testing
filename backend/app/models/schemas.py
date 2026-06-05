@@ -39,6 +39,13 @@ class TestCreate(BaseModel):
     custom_prompt: str | None = None
     resume_from_task_id: str | None = None
     resume_policy: Literal["missing_or_failed"] | None = None
+    batch_id: str | None = None
+    batch_name: str | None = None
+    batch_case_name: str | None = None
+    batch_case_index: int | None = None
+    batch_channel_name: str | None = None
+    batch_channel_index: int | None = None
+    batch_total_tests: int | None = None
 
     @model_validator(mode="after")
     def validate_custom_prompt(self) -> "TestCreate":
@@ -96,6 +103,60 @@ class MatrixResumeRequest(BaseModel):
     resume_policy: Literal["missing_or_failed"] = "missing_or_failed"
 
 
+class CustomCaseBatchCase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    prompt: str = Field(..., min_length=1)
+
+
+class CustomCaseBatchChannel(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    api_protocol: Literal["openai", "anthropic", "gemini"] = "openai"
+    anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    base_url: str = Field(..., min_length=1)
+    endpoint: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+
+
+class CustomCaseBatchRequest(BaseModel):
+    batch_name: str = Field(default="批量自定义 Case 诊断", min_length=1, max_length=120)
+    cases: list[CustomCaseBatchCase] = Field(..., min_length=1)
+    channels: list[CustomCaseBatchChannel] = Field(..., min_length=1)
+    concurrency: int = Field(default=1, ge=1, le=1000)
+    duration_sec: int = Field(default=10, ge=1, le=86400)
+    max_output_tokens: int = Field(default=128, ge=1)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    timeout_sec: int = Field(default=600, ge=1)
+    connect_timeout_sec: int = Field(default=30, ge=1)
+    warmup_requests: int = Field(default=0, ge=0)
+    max_retries: int = Field(default=2, ge=0)
+    retry_backoff_base: float = Field(default=1.0, ge=0.0)
+    retry_backoff_max: float = Field(default=8.0, ge=0.0)
+    think_time_ms: int = Field(default=0, ge=0)
+    enable_stream: bool = True
+
+    @model_validator(mode="after")
+    def validate_batch_size(self) -> "CustomCaseBatchRequest":
+        if len(self.cases) * len(self.channels) > 12:
+            raise ValueError("批量诊断组合数不能超过 12 个")
+        return self
+
+
+class CustomCaseBatchFailure(BaseModel):
+    case_name: str
+    channel_name: str
+    message: str
+
+
+class CustomCaseBatchOut(BaseModel):
+    batch_id: str
+    batch_name: str
+    total: int
+    started: int
+    test_ids: list[str]
+    failures: list[CustomCaseBatchFailure]
+
+
 class EventOut(BaseModel):
     id: int
     level: str
@@ -150,4 +211,3 @@ class CurlConvertOut(BaseModel):
     recognized_params: list[str]
     unknown_params: list[str]
     warnings: list[str]
-

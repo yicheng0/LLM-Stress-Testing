@@ -5,6 +5,7 @@
         <h2 class="section-title">测试对比</h2>
         <div class="toolbar">
           <el-tag effect="plain">{{ reports.length }} 个测试</el-tag>
+          <el-tag v-if="isCaseChannelMode" type="success" effect="plain">渠道报告</el-tag>
           <el-button :icon="Clock" @click="router.push('/history')">返回历史</el-button>
         </div>
       </div>
@@ -19,13 +20,87 @@
           @action="router.push('/history')"
         />
         <el-alert
-          v-else-if="ids.length < 2 || ids.length > 4"
+          v-else-if="!validCompareCount"
           title="对比数量不符合要求"
-          description="请从历史记录中选择 2-4 条测试。"
+          :description="isCaseChannelMode ? '批量渠道报告支持 1-12 条测试。' : '请从历史记录中选择 2-4 条测试。'"
           type="warning"
           show-icon
           :closable="false"
         />
+        <template v-else-if="isCaseChannelMode">
+          <div class="batch-summary">
+            <div>
+              <span>批次</span>
+              <strong>{{ batchSummary.name }}</strong>
+            </div>
+            <div>
+              <span>Case</span>
+              <strong>{{ batchSummary.caseCount }}</strong>
+            </div>
+            <div>
+              <span>渠道</span>
+              <strong>{{ batchSummary.channelCount }}</strong>
+            </div>
+            <div>
+              <span>完成/总数</span>
+              <strong>{{ batchSummary.completed }}/{{ batchSummary.total }}</strong>
+            </div>
+          </div>
+
+          <div v-for="group in caseChannelGroups" :key="group.caseName" class="section nested-section">
+            <div class="section-header">
+              <h2 class="section-title">{{ group.caseName }}</h2>
+              <el-tag effect="plain">{{ group.items.length }} 个渠道</el-tag>
+            </div>
+            <div class="section-body">
+              <el-table :data="caseChannelMetricRows" border>
+                <el-table-column prop="label" label="指标" width="150" fixed />
+                <el-table-column
+                  v-for="item in group.items"
+                  :key="item.id"
+                  :label="item.channelName"
+                  min-width="170"
+                  show-overflow-tooltip
+                >
+                  <template #default="{ row }">
+                    <span :class="caseChannelRankClass(group.items, item.id, row)">
+                      {{ row.format(item[row.field]) }}
+                    </span>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="case-links">
+                <el-button
+                  v-for="item in group.items"
+                  :key="`${item.id}-link`"
+                  size="small"
+                  @click="router.push(`/tests/${item.id}/report`)"
+                >
+                  {{ item.channelName }} 明细
+                </el-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="section nested-section">
+            <div class="section-header">
+              <h2 class="section-title">渠道结论</h2>
+            </div>
+            <div class="section-body">
+              <div class="compare-advice">
+                <el-alert
+                  v-for="item in caseChannelAdvice"
+                  :key="item.title"
+                  :title="item.title"
+                  :description="item.description"
+                  :type="item.type"
+                  show-icon
+                  :closable="false"
+                />
+              </div>
+            </div>
+          </div>
+        </template>
         <template v-else>
           <div class="compare-cards">
             <div v-for="item in compareItems" :key="item.id" class="compare-card">
@@ -121,7 +196,38 @@ const router = useRouter()
 const loading = ref(false)
 const reports = ref([])
 const ids = computed(() => String(route.query.ids || '').split(',').map((item) => item.trim()).filter(Boolean))
+const isCaseChannelMode = computed(() => route.query.mode === 'case-channel')
+const validCompareCount = computed(() => {
+  if (isCaseChannelMode.value) return ids.value.length >= 1 && ids.value.length <= 12
+  return ids.value.length >= 2 && ids.value.length <= 4
+})
 const compareItems = computed(() => reports.value.map(normalizeReport))
+const caseChannelItems = computed(() => compareItems.value.filter((item) => item.batchId))
+const caseChannelGroups = computed(() => {
+  const groups = new Map()
+  for (const item of caseChannelItems.value) {
+    if (!groups.has(item.caseName)) groups.set(item.caseName, [])
+    groups.get(item.caseName).push(item)
+  }
+  return [...groups.entries()].map(([caseName, items]) => ({
+    caseName,
+    items: items.sort((a, b) => a.channelIndex - b.channelIndex)
+  })).sort((a, b) => {
+    const left = a.items[0]?.caseIndex || 0
+    const right = b.items[0]?.caseIndex || 0
+    return left - right
+  })
+})
+const batchSummary = computed(() => {
+  const first = caseChannelItems.value[0] || {}
+  return {
+    name: first.batchName || '批量渠道诊断',
+    total: caseChannelItems.value.length,
+    completed: reports.value.filter((report) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(report.task_status)).length,
+    caseCount: new Set(caseChannelItems.value.map((item) => item.caseName)).size,
+    channelCount: new Set(caseChannelItems.value.map((item) => item.channelName)).size
+  }
+})
 const metricRows = [
   { label: '成功率', field: 'success_rate', format: percent, higherBetter: true },
   { label: 'Total TPM', field: 'total_tpm', format: number, higherBetter: true },
@@ -130,6 +236,15 @@ const metricRows = [
   { label: 'P99 延迟', field: 'latency_p99', format: seconds, higherBetter: false },
   { label: '平均延迟', field: 'latency_avg', format: seconds, higherBetter: false },
   { label: 'TTFT 平均', field: 'ttft_avg', format: seconds, higherBetter: false },
+  { label: '失败请求', field: 'failed_requests', format: number, higherBetter: false }
+]
+const caseChannelMetricRows = [
+  { label: '成功率', field: 'success_rate', format: percent, higherBetter: true },
+  { label: 'TTFT 平均', field: 'ttft_avg', format: seconds, higherBetter: false },
+  { label: 'P95 延迟', field: 'latency_p95', format: seconds, higherBetter: false },
+  { label: 'P99 延迟', field: 'latency_p99', format: seconds, higherBetter: false },
+  { label: 'RPM', field: 'rpm', format: number, higherBetter: true },
+  { label: 'Total TPM', field: 'total_tpm', format: number, higherBetter: true },
   { label: '失败请求', field: 'failed_requests', format: number, higherBetter: false }
 ]
 const advice = computed(() => {
@@ -167,9 +282,38 @@ const advice = computed(() => {
   }
   return items
 })
+const caseChannelAdvice = computed(() => {
+  const items = []
+  for (const group of caseChannelGroups.value) {
+    const bestTtft = bestFrom(group.items, 'ttft_avg', false)
+    const bestSuccess = bestFrom(group.items, 'success_rate', true)
+    if (bestTtft) {
+      items.push({
+        title: `${group.caseName} 最低 TTFT：${bestTtft.channelName}`,
+        description: `平均 TTFT 为 ${seconds(bestTtft.ttft_avg)}，同 Case 下首 token 表现最好。`,
+        type: 'info'
+      })
+    }
+    if (bestSuccess && Number(bestSuccess.success_rate || 0) < 0.99) {
+      items.push({
+        title: `${group.caseName} 成功率不足 99%`,
+        description: `当前最佳渠道为 ${bestSuccess.channelName}，成功率 ${percent(bestSuccess.success_rate)}，建议查看明细错误。`,
+        type: 'warning'
+      })
+    }
+  }
+  if (!items.length) {
+    items.push({
+      title: '暂无渠道结论',
+      description: '请等待子任务完成并生成报告后刷新。',
+      type: 'info'
+    })
+  }
+  return items.slice(0, 6)
+})
 
 async function loadReports() {
-  if (ids.value.length < 2 || ids.value.length > 4) return
+  if (!validCompareCount.value) return
   loading.value = true
   try {
     reports.value = await Promise.all(ids.value.map((id) => getReport(id)))
@@ -189,6 +333,12 @@ function normalizeReport(report) {
   return {
     id: report.test_id,
     name: config.name || report.test_id,
+    batchId: config.batch_id,
+    batchName: config.batch_name,
+    caseName: config.batch_case_name || config.name || report.test_id,
+    caseIndex: Number(config.batch_case_index || 0),
+    channelName: config.batch_channel_name || config.base_url || '-',
+    channelIndex: Number(config.batch_channel_index || 0),
     protocol: config.api_protocol || 'openai',
     model: config.model || '-',
     concurrency: config.concurrency,
@@ -231,8 +381,23 @@ function rankClass(id, field, higherBetter) {
   return best.id === id ? 'best-value' : ''
 }
 
+function caseChannelRankClass(items, id, row) {
+  const values = items
+    .map((item) => ({ id: item.id, value: Number(item[row.field]) }))
+    .filter((item) => Number.isFinite(item.value))
+  if (values.length < 2) return ''
+  const best = values.sort((a, b) => row.higherBetter ? b.value - a.value : a.value - b.value)[0]
+  return best.id === id ? 'best-value' : ''
+}
+
 function bestBy(field, higherBetter) {
   return [...compareItems.value]
+    .filter((item) => Number.isFinite(Number(item[field])))
+    .sort((a, b) => higherBetter ? Number(b[field]) - Number(a[field]) : Number(a[field]) - Number(b[field]))[0]
+}
+
+function bestFrom(items, field, higherBetter) {
+  return [...items]
     .filter((item) => Number.isFinite(Number(item[field])))
     .sort((a, b) => higherBetter ? Number(b[field]) - Number(a[field]) : Number(a[field]) - Number(b[field]))[0]
 }
@@ -342,6 +507,43 @@ onMounted(loadReports)
   font-weight: 800;
 }
 
+.batch-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.batch-summary > div {
+  min-height: 82px;
+  padding: 13px;
+  border: 1px solid #dfe7f2;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.batch-summary span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.batch-summary strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  margin-top: 8px;
+  color: #1e293b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .nested-section {
   margin-top: 16px;
   margin-bottom: 0;
@@ -354,13 +556,15 @@ onMounted(loadReports)
 }
 
 @media (max-width: 1180px) {
-  .compare-cards {
+  .compare-cards,
+  .batch-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
-  .compare-cards {
+  .compare-cards,
+  .batch-summary {
     grid-template-columns: 1fr;
   }
 }

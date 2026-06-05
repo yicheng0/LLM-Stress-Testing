@@ -33,6 +33,13 @@ export function createTest(payload) {
   })
 }
 
+export function createCustomCaseBatch(payload) {
+  return request('/api/tests/custom-case-batch', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
 export function listTests(params = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
