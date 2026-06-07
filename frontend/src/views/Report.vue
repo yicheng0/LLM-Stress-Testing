@@ -41,6 +41,8 @@
           <el-descriptions-item label="输入 Token 目标">{{ isMatrix || isCustomPrompt ? '-' : number(config.input_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="最大输出 Token">{{ number(config.max_output_tokens) }}</el-descriptions-item>
           <el-descriptions-item label="测试点">{{ isMatrix ? summary.test_points : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="缓存测试">{{ config.cache_test_enabled ? '开启' : '关闭' }}</el-descriptions-item>
+          <el-descriptions-item label="缓存预热请求">{{ number(config.cache_warmup_requests) }}</el-descriptions-item>
           <el-descriptions-item v-if="isCustomPrompt" label="自定义字符数">{{ number(config.custom_prompt_chars) }}</el-descriptions-item>
           <el-descriptions-item v-if="isCustomPrompt" label="实际输入 Token">{{ number(summaryConfig.input_tokens_actual) }}</el-descriptions-item>
           <el-descriptions-item v-if="isCustomPrompt" label="Prompt SHA256" :span="2">{{ shortHash(config.custom_prompt_sha256) }}</el-descriptions-item>

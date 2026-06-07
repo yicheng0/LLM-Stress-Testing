@@ -1262,6 +1262,69 @@ class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(captured["attempt_rpm"], captured["current_rpm"])
         self.assertGreater(captured["attempt_tpm"], captured["current_tpm"])
 
+    async def test_cache_warmup_is_excluded_from_formal_summary(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 1,
+            "input_tokens": 1,
+            "warmup_requests": 0,
+            "cache_test_enabled": True,
+            "cache_warmup_requests": 2,
+            "enable_stream": False,
+            "timeout_sec": 60,
+        }, retain_results=True)
+        sent_prompts = []
+        progress_events = []
+
+        async def progress(data):
+            progress_events.append(dict(data))
+
+        async def fake_send_one(session, request_id):
+            sent_prompts.append(runner.prompt)
+            if runner.phase == "cache_warmup":
+                return result(
+                    request_id=request_id,
+                    input_tokens=100,
+                    output_tokens=1,
+                    total_tokens=101,
+                    cached_input_tokens=0,
+                    cache_creation_input_tokens=100,
+                    cache_inclusive_total_tokens=101,
+                )
+            if request_id <= 2:
+                if request_id == 2:
+                    runner.stop_event.set()
+                return result(
+                    request_id=request_id,
+                    input_tokens=100,
+                    output_tokens=1,
+                    total_tokens=101,
+                    cached_input_tokens=80,
+                    cache_creation_input_tokens=0,
+                    cache_inclusive_total_tokens=181,
+                )
+            return None
+
+        runner.send_one = fake_send_one
+        runner.progress_callback = progress
+        runner.stop_event = asyncio.Event()
+
+        summary = await runner.run()
+
+        self.assertEqual(summary["results"]["total_requests"], 2)
+        self.assertEqual(summary["results"]["total_cached_input_tokens"], 160)
+        self.assertEqual(summary["results"]["total_cache_creation_input_tokens"], 0)
+        self.assertEqual(summary["config"]["cache_test_enabled"], True)
+        self.assertEqual(summary["config"]["cache_warmup_requests"], 2)
+        self.assertEqual([item.request_id for item in runner.results], [1, 2])
+        self.assertEqual(len(set(sent_prompts)), 1)
+        cache_events = [event for event in progress_events if event.get("phase") == "cache_warmup"]
+        self.assertTrue(cache_events)
+        self.assertEqual(cache_events[-1]["cache_warmup_completed"], 2)
+
 
 class StreamParserTest(unittest.IsolatedAsyncioTestCase):
     async def test_parse_stream_handles_chunked_sse_lines(self):

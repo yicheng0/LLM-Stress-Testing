@@ -187,6 +187,26 @@
 
     <div class="section">
       <div class="section-header">
+        <h2 class="section-title">缓存测试</h2>
+      </div>
+      <div class="section-body grid-2">
+        <el-form-item label="缓存测试模式" prop="cache_test_enabled">
+          <el-switch v-model="form.cache_test_enabled" active-text="开启" inactive-text="关闭" />
+        </el-form-item>
+        <el-form-item label="缓存预热请求数" prop="cache_warmup_requests">
+          <el-input-number
+            v-model="form.cache_warmup_requests"
+            :min="0"
+            :max="10000"
+            :disabled="!form.cache_test_enabled"
+            controls-position="right"
+          />
+        </el-form-item>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
         <h2 class="section-title">预期吞吐估算</h2>
         <div class="toolbar">
           <span class="muted">假设单请求平均耗时</span>
@@ -556,6 +576,7 @@
               <div><span>最大输出</span><strong>{{ number(form.max_output_tokens) }} Token</strong></div>
               <div><span>单点时长</span><strong>{{ form.matrix_mode ? `${form.matrix_duration_sec}s` : `${form.duration_sec}s` }}</strong></div>
               <div><span>预热请求</span><strong>{{ number(form.warmup_requests) }}</strong></div>
+              <div><span>缓存测试</span><strong>{{ form.cache_test_enabled ? `开启 / ${number(form.cache_warmup_requests)}` : '关闭' }}</strong></div>
             </div>
             <div class="preview-section">
               <h4>预期吞吐估算</h4>
@@ -617,6 +638,8 @@ const defaults = {
   timeout_sec: 600,
   connect_timeout_sec: 30,
   warmup_requests: 0,
+  cache_test_enabled: false,
+  cache_warmup_requests: 0,
   max_retries: 2,
   retry_backoff_base: 1,
   retry_backoff_max: 8,
@@ -752,6 +775,8 @@ const testPresets = [
       input_tokens: 1000,
       max_output_tokens: 128,
       warmup_requests: 0,
+      cache_test_enabled: false,
+      cache_warmup_requests: 0,
       enable_stream: true,
       matrix_mode: false,
       matrix_duration_sec: 60
@@ -769,6 +794,8 @@ const testPresets = [
       input_tokens: 2000,
       max_output_tokens: 256,
       warmup_requests: 2,
+      cache_test_enabled: false,
+      cache_warmup_requests: 0,
       enable_stream: true,
       matrix_mode: false,
       matrix_duration_sec: 60
@@ -786,6 +813,8 @@ const testPresets = [
       input_tokens: 10000,
       max_output_tokens: 256,
       warmup_requests: 10,
+      cache_test_enabled: false,
+      cache_warmup_requests: 0,
       enable_stream: true,
       matrix_mode: false,
       matrix_duration_sec: 60
@@ -803,6 +832,8 @@ const testPresets = [
       input_tokens: 100000,
       max_output_tokens: 512,
       warmup_requests: 2,
+      cache_test_enabled: false,
+      cache_warmup_requests: 0,
       enable_stream: true,
       matrix_mode: false,
       matrix_duration_sec: 60
@@ -820,6 +851,8 @@ const testPresets = [
       input_tokens: 1000,
       max_output_tokens: 128,
       warmup_requests: 0,
+      cache_test_enabled: false,
+      cache_warmup_requests: 0,
       enable_stream: true,
       matrix_mode: true,
       input_tokens_list: '1000,10000,100000',
@@ -1390,6 +1423,19 @@ watch(
 )
 
 watch(
+  () => form.cache_test_enabled,
+  (enabled) => {
+    if (enabled && Number(form.cache_warmup_requests || 0) <= 0) {
+      form.cache_warmup_requests = 3
+    }
+    if (!enabled) {
+      form.cache_warmup_requests = 0
+    }
+  },
+  { immediate: true }
+)
+
+watch(
   usageMode,
   (mode) => {
     if (mode !== 'beginner') return
@@ -1475,6 +1521,7 @@ function applyPreset(preset) {
     'input_tokens',
     'max_output_tokens',
     'warmup_requests',
+    'cache_warmup_requests',
     'input_tokens_list',
     'concurrency_list',
     'matrix_duration_sec'
@@ -1512,6 +1559,9 @@ function applyTargetEstimate() {
 
 async function submit() {
   form.base_url = String(form.base_url || '').trim()
+  form.cache_warmup_requests = form.cache_test_enabled
+    ? Math.max(0, Number(form.cache_warmup_requests || 0))
+    : 0
   if (!isRootUser.value) {
     customBaseUrl.value = form.base_url
     if (!isBuiltInDomain(customBaseUrl.value)) {

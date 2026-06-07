@@ -90,6 +90,10 @@ class LoadTestRunner:
         self._attempt_count = 0
         self._attempt_token_count = 0
         self._success_latency_window: deque[float] = deque(maxlen=10)
+        self.phase = "queued"
+        self.cache_warmup_completed = 0
+        self.cache_warmup_successful = 0
+        self.cache_warmup_failed = 0
 
     def _prompt_for_tokens(self, input_tokens: int) -> tuple[str, int]:
         cached = self._prompt_cache.get(input_tokens)
@@ -195,9 +199,65 @@ class LoadTestRunner:
             return None
         return result
 
+    async def _run_warmup_requests(
+        self,
+        session,
+        *,
+        count: int,
+        label: str,
+        count_as_cache_warmup: bool = False,
+    ) -> list[RequestResult]:
+        if count <= 0 or self.should_stop():
+            return []
+        print(f"[*] 开始{label}，发送 {count} 个请求...", flush=True)
+        await self.emit_log("info", f"开始{label}，发送 {count} 个请求")
+        if count_as_cache_warmup:
+            self.phase = "cache_warmup"
+            self.cache_warmup_completed = 0
+            self.cache_warmup_successful = 0
+            self.cache_warmup_failed = 0
+            await self.emit_progress(force=True)
+
+        tasks = []
+        for _ in range(count):
+            req_id = await self.next_request_id()
+            tasks.append(asyncio.create_task(self._request_or_stop(session, req_id)))
+        results = [result for result in await asyncio.gather(*tasks) if result is not None]
+        success = sum(1 for result in results if result.ok)
+
+        if count_as_cache_warmup:
+            self.cache_warmup_completed = len(results)
+            self.cache_warmup_successful = success
+            self.cache_warmup_failed = len(results) - success
+            await self.emit_progress(force=True)
+
+        print(f"[*] {label}完成，成功 {success}/{len(results)}", flush=True)
+        await self.emit_log("info", f"{label}完成，成功 {success}/{len(results)}")
+        if success == 0 and results:
+            first_error = results[0]
+            print(f"[!] {label}请求全部失败！第一个错误: {first_error.error_type}", flush=True)
+            print(f"[!] 错误详情: {first_error.error_message[:500]}", flush=True)
+            print(f"[!] HTTP状态码: {first_error.status}", flush=True)
+            await self.emit_log("error", f"{label}请求全部失败：{first_error.error_type}")
+        return results
+
     async def emit_log(self, level: str, message: str) -> None:
         if self.log_callback:
             await self._maybe_await(self.log_callback(level, message))
+
+    def _reset_formal_counters(self) -> None:
+        self.results = []
+        self.metrics_accumulator.reset()
+        self.request_counter = 0
+        self._success_count = 0
+        self._failure_count = 0
+        self._success_token_count = 0
+        self._success_cached_input_count = 0
+        self._success_cache_inclusive_token_count = 0
+        self._attempt_count = 0
+        self._attempt_token_count = 0
+        self._success_latency_window.clear()
+        self.last_progress_emit_at = 0.0
 
     def _record_result(self, result: RequestResult) -> None:
         if self.retain_results:
@@ -249,6 +309,12 @@ class LoadTestRunner:
             "attempt_tpm": round(self._attempt_token_count * 60 / elapsed, 4),
             "avg_latency_sec": round(recent_latency, 4),
             "elapsed_sec": round(elapsed, 2),
+            "phase": self.phase,
+            "cache_test_enabled": self.config.cache_test_enabled,
+            "cache_warmup_requests": self.config.cache_warmup_requests,
+            "cache_warmup_completed": self.cache_warmup_completed,
+            "cache_warmup_successful": self.cache_warmup_successful,
+            "cache_warmup_failed": self.cache_warmup_failed,
         }))
 
     async def next_request_id(self) -> int:
@@ -398,38 +464,39 @@ class LoadTestRunner:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=self.config.connect_timeout_sec)
         self.test_start_wall_time = time.time()
         self.test_start_time = self.test_start_wall_time
-        self.stop_at = self.test_start_wall_time + self.config.duration_sec
+        self.stop_at = 0.0
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            warmup_results = []
             if self.config.warmup_requests > 0 and not self.should_stop():
-                print(f"[*] 开始预热，发送 {self.config.warmup_requests} 个预热请求...", flush=True)
-                await self.emit_log("info", f"开始预热，发送 {self.config.warmup_requests} 个预热请求")
-                warm_tasks = []
-                for _ in range(self.config.warmup_requests):
-                    req_id = await self.next_request_id()
-                    warm_tasks.append(asyncio.create_task(self._request_or_stop(session, req_id)))
-                warmup_results = [result for result in await asyncio.gather(*warm_tasks) if result is not None]
-                for result in warmup_results:
-                    self._record_result(result)
-                warmup_success = sum(1 for r in warmup_results if r.ok)
-                print(f"[*] 预热完成，成功 {warmup_success}/{len(warmup_results)}", flush=True)
-                await self.emit_log("info", f"预热完成，成功 {warmup_success}/{len(warmup_results)}")
-                if warmup_success == 0 and warmup_results:
-                    first_error = warmup_results[0]
-                    print(f"[!] 预热请求全部失败！第一个错误: {first_error.error_type}", flush=True)
-                    print(f"[!] 错误详情: {first_error.error_message[:500]}", flush=True)
-                    print(f"[!] HTTP状态码: {first_error.status}", flush=True)
-                    await self.emit_log("error", f"预热请求全部失败：{first_error.error_type}")
+                self.phase = "warmup"
+                await self._run_warmup_requests(session, count=self.config.warmup_requests, label="预热")
                 if self.should_stop() or self.deadline_reached():
                     await self.emit_progress(force=True)
                     await self.emit_log("warning", "收到停止信号，结束压测")
                     return self.summarize()
+            cache_warmup_count = self.config.cache_warmup_requests if self.config.cache_test_enabled else 0
+            if cache_warmup_count > 0 and not self.should_stop():
+                await self._run_warmup_requests(
+                    session,
+                    count=cache_warmup_count,
+                    label="缓存预热",
+                    count_as_cache_warmup=True,
+                )
+                if self.should_stop() or self.deadline_reached():
+                    await self.emit_progress(force=True)
+                    await self.emit_log("warning", "收到停止信号，结束压测")
+                    return self.summarize()
+            self._reset_formal_counters()
+            self.test_start_wall_time = time.time()
+            self.test_start_time = self.test_start_wall_time
+            self.stop_at = self.test_start_wall_time + self.config.duration_sec
+            self.phase = "load"
             print(f"[*] 开始正式压测，并发={self.config.concurrency}，时长={self.config.duration_sec}s ...", flush=True)
             await self.emit_log("info", f"开始正式压测，并发={self.config.concurrency}，时长={self.config.duration_sec}s")
             await self.emit_progress(force=True)
             tasks = [asyncio.create_task(self.worker(i, session, semaphore)) for i in range(self.config.concurrency)]
             await asyncio.gather(*tasks)
         print("[*] 压测结束，正在汇总结果...", flush=True)
+        self.phase = "completed"
         await self.emit_progress(force=True)
         await self.emit_log("info", "压测结束，正在汇总结果")
         return self.summarize()

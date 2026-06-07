@@ -22,6 +22,8 @@ class LoadTestConfig:
     timeout_sec: int = 600
     connect_timeout_sec: int = 30
     warmup_requests: int = 5
+    cache_test_enabled: bool = False
+    cache_warmup_requests: int = 0
     max_retries: int = 2
     retry_backoff_base: float = 1.0
     retry_backoff_max: float = 8.0
@@ -71,6 +73,8 @@ class LoadTestConfig:
         self.timeout_sec = int(self.timeout_sec)
         self.connect_timeout_sec = int(self.connect_timeout_sec)
         self.warmup_requests = int(self.warmup_requests)
+        self.cache_test_enabled = bool(self.cache_test_enabled)
+        self.cache_warmup_requests = int(self.cache_warmup_requests)
         self.max_retries = int(self.max_retries)
         self.retry_backoff_base = float(self.retry_backoff_base)
         self.retry_backoff_max = float(self.retry_backoff_max)

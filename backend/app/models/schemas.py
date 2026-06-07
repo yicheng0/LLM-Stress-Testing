@@ -41,6 +41,8 @@ class TestCreate(BaseModel):
     timeout_sec: int = Field(default=600, ge=1)
     connect_timeout_sec: int = Field(default=30, ge=1)
     warmup_requests: int = Field(default=0, ge=0)
+    cache_test_enabled: bool = False
+    cache_warmup_requests: int = Field(default=0, ge=0)
     max_retries: int = Field(default=2, ge=0)
     retry_backoff_base: float = Field(default=1.0, ge=0.0)
     retry_backoff_max: float = Field(default=8.0, ge=0.0)
@@ -88,6 +90,8 @@ class TestTaskOut(BaseModel):
     input_tokens: int
     max_output_tokens: int
     enable_stream: bool
+    cache_test_enabled: bool = False
+    cache_warmup_requests: int = 0
     matrix_mode: bool
     expected_metrics: dict[str, Any] | None = None
     prompt_source: str = "synthetic"

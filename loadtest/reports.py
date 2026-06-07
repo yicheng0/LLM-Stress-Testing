@@ -80,6 +80,8 @@ def render_markdown_report(summary: Dict[str, Any]) -> str:
 {custom_prompt_lines}- 最大输出 tokens: **{cfg['max_output_tokens']}**
 - 单请求超时: **{cfg['timeout_sec']} s**
 - 预热请求数: **{cfg['warmup_requests']}**
+- 缓存测试模式: **{'启用' if cfg.get('cache_test_enabled') else '禁用'}**
+- 缓存预热请求数: **{cfg.get('cache_warmup_requests') or 0}**
 - 流式模式: **{'启用' if cfg.get('enable_stream') else '禁用'}**
 
 ## 3. 核心结果
@@ -235,6 +237,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
     <div class="max-w-7xl mx-auto">
         <h1 class="text-4xl font-bold text-gray-900 mb-2">LLM API 压测报告</h1>
         <p class="text-gray-600 mb-8">模型: {cfg['model']} | 并发: {cfg['concurrency']} | 时长: {cfg['duration_sec']}s | 输入来源: {prompt_source}</p>
+        <p class="text-gray-500 mb-8">缓存测试: {'启用' if cfg.get('cache_test_enabled') else '禁用'} | 缓存预热请求: {cfg.get('cache_warmup_requests') or 0}</p>
 
         <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
             <div class="bg-white rounded-lg shadow p-6">
@@ -437,6 +440,8 @@ def render_matrix_report(results_matrix: list[Dict[str, Any]]) -> str:
 - Model: `{cfg['model']}`
 - 测试点数量: **{len(results_matrix)}**
 - 每个测试点持续时间: **{first_result['config']['duration_sec']} 秒**
+- 缓存测试模式: **{'启用' if cfg.get('cache_test_enabled') else '禁用'}**
+- 缓存预热请求数: **{cfg.get('cache_warmup_requests') or 0}**
 - 流式模式: **{'启用' if cfg.get('enable_stream') else '禁用'}**
 
 ## 2. 测试矩阵结果

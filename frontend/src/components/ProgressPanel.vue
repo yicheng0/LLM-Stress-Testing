@@ -25,6 +25,10 @@
       <el-progress :percentage="progressPercent" :status="progressStatus" />
       <div class="progress-grid">
         <div>
+          <span class="muted">阶段</span>
+          <strong class="compact">{{ phaseText }}</strong>
+        </div>
+        <div>
           <span class="muted">已完成</span>
           <strong>{{ number(progress?.completed_requests) }}</strong>
         </div>
@@ -92,6 +96,15 @@ const terminalStatuses = ['completed', 'failed', 'cancelled', 'interrupted']
 const statusText = computed(() => statusMap[props.status] || props.status)
 const canStop = computed(() => ['queued', 'running', 'stopping'].includes(props.status) || props.stopping)
 const canReport = computed(() => terminalStatuses.includes(props.status))
+const phaseText = computed(() => {
+  if (props.progress?.phase === 'cache_warmup') {
+    return `缓存预热 ${number(props.progress?.cache_warmup_completed)} / ${number(props.progress?.cache_warmup_requests)}`
+  }
+  if (props.progress?.phase === 'warmup') return '预热中'
+  if (props.progress?.phase === 'load') return '正式压测'
+  if (props.progress?.phase === 'completed') return '已结束'
+  return terminalStatuses.includes(props.status) ? '已结束' : '等待启动'
+})
 const progressPercent = computed(() => {
   const elapsed = actualRuntimeSec.value
   const duration = Number(props.progress?.duration_sec || props.progress?.target_duration_sec || 0)

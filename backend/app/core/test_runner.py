@@ -50,6 +50,8 @@ class WebLoadTestRunner:
             "timeout_sec": int(self.config.get("timeout_sec", 600)),
             "connect_timeout_sec": int(self.config.get("connect_timeout_sec", 30)),
             "warmup_requests": int(self.config.get("warmup_requests", 0)),
+            "cache_test_enabled": bool(self.config.get("cache_test_enabled", False)),
+            "cache_warmup_requests": int(self.config.get("cache_warmup_requests", 0)),
             "max_retries": int(self.config.get("max_retries", 2)),
             "retry_backoff_base": float(self.config.get("retry_backoff_base", 1.0)),
             "retry_backoff_max": float(self.config.get("retry_backoff_max", 8.0)),

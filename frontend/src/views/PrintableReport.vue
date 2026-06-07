@@ -42,6 +42,8 @@
           <div><span>最大输出 Token</span><strong>{{ number(config.max_output_tokens) }}</strong></div>
           <div><span>测试时长</span><strong>{{ number(effectiveDuration) }} 秒</strong></div>
           <div><span>流式模式</span><strong>{{ config.enable_stream ? '开启' : '关闭' }}</strong></div>
+          <div><span>缓存测试</span><strong>{{ config.cache_test_enabled ? '开启' : '关闭' }}</strong></div>
+          <div><span>缓存预热请求</span><strong>{{ number(config.cache_warmup_requests) }}</strong></div>
         </div>
       </section>
 

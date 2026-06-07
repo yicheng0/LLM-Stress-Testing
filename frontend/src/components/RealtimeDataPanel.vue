@@ -152,6 +152,7 @@
               <span class="activity-main">
                 <strong>{{ item.name }}</strong>
                 <span>{{ statusText(item.status) }} · {{ protocolText(item.api_protocol) }} · {{ item.model }}</span>
+                <span v-if="phaseText(item)" class="activity-phase">{{ phaseText(item) }}</span>
                 <span v-if="item.error_message" class="activity-error">{{ errorText(item.error_message) }}</span>
                 <span v-if="item.issue_tags?.length" class="issue-tags">
                   <el-tag
@@ -555,6 +556,15 @@ function statusText(status) {
     interrupted: '中断'
   }
   return names[status] || status || '-'
+}
+
+function phaseText(item) {
+  if (!item || !item.cache_test_enabled) return ''
+  if (item.phase === 'cache_warmup') {
+    return `缓存预热 ${number(item.cache_warmup_completed)} / ${number(item.cache_warmup_requests)}`
+  }
+  if (item.phase === 'load') return '缓存预热后正式压测'
+  return ''
 }
 
 function protocolText(protocol) {
@@ -1036,6 +1046,10 @@ onBeforeUnmount(() => {
 
 .activity-main .activity-error {
   color: #b91c1c;
+}
+
+.activity-main .activity-phase {
+  color: #0f766e;
 }
 
 .issue-tags {

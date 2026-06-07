@@ -64,6 +64,8 @@
             <el-descriptions-item label="输入 Token 目标">{{ task?.input_tokens || '-' }}</el-descriptions-item>
             <el-descriptions-item label="最大输出">{{ task?.max_output_tokens || '-' }}</el-descriptions-item>
             <el-descriptions-item label="流式">{{ task?.enable_stream ? '开启' : '关闭' }}</el-descriptions-item>
+            <el-descriptions-item label="缓存测试">{{ task?.cache_test_enabled || task?.summary?.config?.cache_test_enabled || progress?.cache_test_enabled ? '开启' : '关闭' }}</el-descriptions-item>
+            <el-descriptions-item label="缓存预热">{{ number(task?.cache_warmup_requests ?? task?.summary?.config?.cache_warmup_requests ?? progress?.cache_warmup_requests) }}</el-descriptions-item>
             <el-descriptions-item label="Endpoint">{{ task?.endpoint || '-' }}</el-descriptions-item>
           </el-descriptions>
         </div>

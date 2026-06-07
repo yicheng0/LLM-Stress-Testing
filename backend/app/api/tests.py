@@ -184,6 +184,9 @@ def _dashboard_task_item(
         item_attempt_tpm = _num(progress.get("attempt_tpm"), _num(summary_results.get("attempt_tpm")))
         item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
         item_p95 = progress.get("latency_sec_p95", summary_results.get("latency_sec_p95"))
+        item_phase = progress.get("phase")
+        item_cache_warmup_completed = progress.get("cache_warmup_completed")
+        item_cache_warmup_requests = progress.get("cache_warmup_requests", config.get("cache_warmup_requests"))
     else:
         item_rpm = _num(summary_results.get("rpm"))
         item_tpm = _num(summary_results.get("total_tpm"))
@@ -195,6 +198,9 @@ def _dashboard_task_item(
         item_attempt_tpm = _num(summary_results.get("attempt_tpm"))
         item_success_rate = summary_results.get("success_rate")
         item_p95 = summary_results.get("latency_sec_p95")
+        item_phase = "completed" if task.status in {"completed", "failed", "cancelled", "interrupted"} else None
+        item_cache_warmup_completed = None
+        item_cache_warmup_requests = config.get("cache_warmup_requests")
     metric_item = {
         "rpm": item_rpm,
         "tpm": item_tpm,
@@ -233,6 +239,10 @@ def _dashboard_task_item(
         "attempt_tpm": item_attempt_tpm,
         "success_rate": item_success_rate,
         "latency_p95": item_p95,
+        "phase": item_phase,
+        "cache_test_enabled": bool(config.get("cache_test_enabled", False)),
+        "cache_warmup_requests": item_cache_warmup_requests,
+        "cache_warmup_completed": item_cache_warmup_completed,
         "expected_metrics": expected_metrics,
         "error_message": error_message,
         "issue_tags": _task_issue_tags(task.status, metric_item, targets, error_message),
@@ -394,6 +404,8 @@ def _task_out(
         input_tokens=task.input_tokens,
         max_output_tokens=task.max_output_tokens,
         enable_stream=task.enable_stream,
+        cache_test_enabled=bool(config.get("cache_test_enabled", False)),
+        cache_warmup_requests=int(config.get("cache_warmup_requests") or 0),
         matrix_mode=task.matrix_mode,
         expected_metrics=config.get("expected_metrics"),
         prompt_source=config.get("prompt_source", "synthetic"),

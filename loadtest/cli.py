@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-sec", type=int, default=600)
     parser.add_argument("--connect-timeout-sec", type=int, default=30)
     parser.add_argument("--warmup-requests", type=int, default=5)
+    parser.add_argument("--cache-test-enabled", action="store_true", default=False, help="启用缓存测试模式：正式压测前先执行缓存预热")
+    parser.add_argument("--cache-warmup-requests", type=int, default=0, help="缓存测试模式下的缓存预热请求数")
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--retry-backoff-base", type=float, default=1.0)
     parser.add_argument("--retry-backoff-max", type=float, default=8.0)
