@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from backend.app.api.docs import convert_curl
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi, infer_json_schema
+from backend.app.models.schemas import CurlConvertRequest
 
 
 class CurlDocConverterTest(unittest.TestCase):
@@ -103,14 +105,52 @@ class CurlDocConverterTest(unittest.TestCase):
     def test_invalid_curl_errors_are_clear(self):
         with self.assertRaisesRegex(CurlConvertError, "未找到请求 URL"):
             convert_curl_to_openapi("curl -d '{}'", "https://api.wenwen-ai.com", "Doc")
-        with self.assertRaisesRegex(CurlConvertError, "未找到 JSON 请求体"):
-            convert_curl_to_openapi("curl https://api.example.com/v1/chat/completions", "https://api.wenwen-ai.com", "Doc")
         with self.assertRaisesRegex(CurlConvertError, "请求体不是合法 JSON"):
             convert_curl_to_openapi(
                 "curl https://api.example.com/v1/chat/completions -d '{bad'",
                 "https://api.wenwen-ai.com",
                 "Doc",
             )
+
+    def test_post_without_body_is_supported_for_control_endpoints(self):
+        converted = convert_curl_to_openapi(
+            curl="""curl -X POST https://api.openai.com/v1/responses/resp_123/cancel \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" """,
+            base_url="https://api.wenwen-ai.com",
+            title="Cancel",
+        )
+
+        self.assertEqual(converted.method, "POST")
+        self.assertEqual(converted.endpoint, "/v1/responses/resp_123/cancel")
+        self.assertEqual(converted.recognized_params, [])
+        self.assertEqual(converted.unknown_params, [])
+        self.assertIn("curl -X POST 'https://api.wenwen-ai.com/v1/responses/resp_123/cancel'", converted.sanitized_curl)
+        self.assertIn("Authorization: Bearer ${API_KEY}", converted.sanitized_curl)
+        self.assertNotIn("$OPENAI_API_KEY", converted.sanitized_curl)
+        self.assertNotIn("  -d ", converted.sanitized_curl)
+        self.assertNotIn("requestBody:", converted.openapi_yaml)
+
+
+class CurlDocApiTest(unittest.IsolatedAsyncioTestCase):
+    async def test_convert_curl_api_accepts_post_without_body(self):
+        response = await convert_curl(
+            CurlConvertRequest(
+                curl="""curl -X POST https://api.openai.com/v1/responses/resp_123/cancel \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" """,
+                base_url="https://api.wenwen-ai.com",
+                title="Cancel",
+            )
+        )
+
+        self.assertEqual(response.method, "POST")
+        self.assertEqual(response.endpoint, "/v1/responses/resp_123/cancel")
+        self.assertEqual(response.recognized_params, [])
+        self.assertEqual(response.unknown_params, [])
+        self.assertIn("Authorization: Bearer ${API_KEY}", response.sanitized_curl)
+        self.assertNotIn("$OPENAI_API_KEY", response.sanitized_curl)
+        self.assertNotIn("  -d ", response.sanitized_curl)
 
 
 if __name__ == "__main__":

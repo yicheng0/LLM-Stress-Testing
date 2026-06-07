@@ -18,6 +18,7 @@ class ParsedCurl:
     url: str
     headers: dict[str, str]
     body: dict[str, Any]
+    has_body: bool
 
 
 @dataclass(frozen=True)
@@ -212,16 +213,18 @@ def parse_curl(curl: str) -> ParsedCurl:
         raise CurlConvertError("未找到请求 URL")
 
     body_text = "".join(body_parts).strip()
-    if not body_text:
-        raise CurlConvertError("未找到 JSON 请求体")
-    try:
-        body = json.loads(body_text)
-    except json.JSONDecodeError as exc:
-        raise CurlConvertError(f"请求体不是合法 JSON：{exc.msg}") from exc
-    if not isinstance(body, dict):
-        raise CurlConvertError("请求体 JSON 顶层必须是对象")
+    has_body = bool(body_text)
+    body: dict[str, Any] = {}
+    if has_body:
+        try:
+            body_value = json.loads(body_text)
+        except json.JSONDecodeError as exc:
+            raise CurlConvertError(f"请求体不是合法 JSON：{exc.msg}") from exc
+        if not isinstance(body_value, dict):
+            raise CurlConvertError("请求体 JSON 顶层必须是对象")
+        body = body_value
 
-    return ParsedCurl(method=method, url=url, headers=headers, body=body)
+    return ParsedCurl(method=method, url=url, headers=headers, body=body, has_body=has_body)
 
 
 def normalize_curl_text(curl: str) -> str:
@@ -321,9 +324,9 @@ def build_warnings(parsed: ParsedCurl, protocol: str) -> list[str]:
     warnings: list[str] = []
     if parsed.method != "POST":
         warnings.append(f"检测到 method 为 {parsed.method}，LLM 生成接口通常应为 POST。")
-    if not parsed.body.get("model") and protocol != "gemini":
+    if parsed.has_body and not parsed.body.get("model") and protocol != "gemini":
         warnings.append("请求体中未找到 model 字段，请确认导入后是否需要补充模型名。")
-    if protocol == "gemini" and not extract_model(parsed.body, parsed.url, protocol):
+    if parsed.has_body and protocol == "gemini" and not extract_model(parsed.body, parsed.url, protocol):
         warnings.append("Gemini 请求未能从 URL 中识别模型名。")
     if not has_auth_header(parsed.headers, protocol):
         warnings.append("未检测到对应协议的鉴权请求头，导出内容将使用占位符鉴权。")
@@ -367,8 +370,9 @@ def build_sanitized_curl(
     ]
     for name, value in headers.items():
         lines.append(f"  -H '{name}: {value}'")
-    body_json = json.dumps(body, ensure_ascii=False, indent=2)
-    lines.append(f"  -d '{body_json}'")
+    if body:
+        body_json = json.dumps(body, ensure_ascii=False, indent=2)
+        lines.append(f"  -d '{body_json}'")
     return " \\\n".join(lines)
 
 
@@ -454,15 +458,6 @@ def build_openapi_spec(
         "summary": summary_for(protocol, model),
         "operationId": operation_id,
         "security": [{security_name: []}],
-        "requestBody": {
-            "required": True,
-            "content": {
-                "application/json": {
-                    "schema": infer_json_schema(body),
-                    "example": body,
-                }
-            },
-        },
         "responses": {
             "200": {
                 "description": "Successful response",
@@ -474,6 +469,16 @@ def build_openapi_spec(
             }
         },
     }
+    if body:
+        operation["requestBody"] = {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": infer_json_schema(body),
+                    "example": body,
+                }
+            },
+        }
     if parameters:
         operation["parameters"] = parameters
 
@@ -575,6 +580,8 @@ def operation_id_for(protocol: str, endpoint: str) -> str:
         return "generateGeminiContent"
     if protocol == "anthropic":
         return "createAnthropicMessage"
+    if endpoint.endswith("/cancel"):
+        return "cancelResponse"
     if endpoint.endswith("/responses"):
         return "createResponse"
     return "createChatCompletion"
@@ -630,10 +637,6 @@ def validate_openapi(spec: dict[str, Any]) -> None:
         raise CurlConvertError(f"OpenAPI 生成失败，缺少字段：{', '.join(missing)}")
     if not spec["paths"]:
         raise CurlConvertError("OpenAPI 生成失败，paths 为空")
-    first_path = next(iter(spec["paths"].values()))
-    first_operation = next(iter(first_path.values()))
-    if "requestBody" not in first_operation:
-        raise CurlConvertError("OpenAPI 生成失败，缺少 requestBody")
     schemes = spec.get("components", {}).get("securitySchemes")
     if not schemes:
         raise CurlConvertError("OpenAPI 生成失败，缺少 securitySchemes")
