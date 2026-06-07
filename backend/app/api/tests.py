@@ -126,6 +126,11 @@ def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
         if not points:
             return {}
         best_tpm = max((_num(point.get("results", {}).get("total_tpm")) for point in points), default=0.0)
+        best_cache_hit_tpm = max((_num(point.get("results", {}).get("cache_hit_tpm")) for point in points), default=0.0)
+        best_cache_inclusive_tpm = max((_num(point.get("results", {}).get("cache_inclusive_tpm")) for point in points), default=0.0)
+        total_cached_input_tokens = sum(_num(point.get("results", {}).get("total_cached_input_tokens")) for point in points)
+        total_cache_creation_input_tokens = sum(_num(point.get("results", {}).get("total_cache_creation_input_tokens")) for point in points)
+        total_input_tokens = sum(_num(point.get("results", {}).get("total_input_tokens")) for point in points)
         best_rpm = max((_num(point.get("results", {}).get("rpm")) for point in points), default=0.0)
         success_rates = [
             _num(point.get("results", {}).get("success_rate"))
@@ -140,6 +145,13 @@ def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
         return {
             "rpm": best_rpm,
             "total_tpm": best_tpm,
+            "cache_hit_tpm": best_cache_hit_tpm,
+            "cache_inclusive_tpm": best_cache_inclusive_tpm,
+            "total_cached_input_tokens": total_cached_input_tokens,
+            "cache_hit_rate": (
+                total_cached_input_tokens / max(total_input_tokens, total_cached_input_tokens + total_cache_creation_input_tokens)
+                if max(total_input_tokens, total_cached_input_tokens + total_cache_creation_input_tokens) > 0 else 0.0
+            ),
             "success_rate": sum(success_rates) / len(success_rates) if success_rates else None,
             "latency_sec_p95": max(p95_values) if p95_values else None,
         }
@@ -162,6 +174,10 @@ def _dashboard_task_item(
     if progress:
         item_rpm = _num(progress.get("current_rpm"), _num(summary_results.get("rpm")))
         item_tpm = _num(progress.get("current_tpm"), _num(summary_results.get("total_tpm")))
+        item_cache_hit_tpm = _num(progress.get("current_cache_hit_tpm"), _num(summary_results.get("cache_hit_tpm")))
+        item_cache_inclusive_tpm = _num(progress.get("current_cache_inclusive_tpm"), _num(summary_results.get("cache_inclusive_tpm")))
+        item_cached_input_tokens = _num(progress.get("current_cached_input_tokens"), _num(summary_results.get("total_cached_input_tokens")))
+        item_cache_hit_rate = progress.get("current_cache_hit_rate", summary_results.get("cache_hit_rate"))
         item_attempt_rpm = _num(progress.get("attempt_rpm"), _num(summary_results.get("attempt_rpm")))
         item_attempt_tpm = _num(progress.get("attempt_tpm"), _num(summary_results.get("attempt_tpm")))
         item_success_rate = progress.get("success_rate", summary_results.get("success_rate"))
@@ -169,6 +185,10 @@ def _dashboard_task_item(
     else:
         item_rpm = _num(summary_results.get("rpm"))
         item_tpm = _num(summary_results.get("total_tpm"))
+        item_cache_hit_tpm = _num(summary_results.get("cache_hit_tpm"))
+        item_cache_inclusive_tpm = _num(summary_results.get("cache_inclusive_tpm"))
+        item_cached_input_tokens = _num(summary_results.get("total_cached_input_tokens"))
+        item_cache_hit_rate = summary_results.get("cache_hit_rate")
         item_attempt_rpm = _num(summary_results.get("attempt_rpm"))
         item_attempt_tpm = _num(summary_results.get("attempt_tpm"))
         item_success_rate = summary_results.get("success_rate")
@@ -176,6 +196,10 @@ def _dashboard_task_item(
     metric_item = {
         "rpm": item_rpm,
         "tpm": item_tpm,
+        "cache_hit_tpm": item_cache_hit_tpm,
+        "cache_inclusive_tpm": item_cache_inclusive_tpm,
+        "cached_input_tokens": item_cached_input_tokens,
+        "cache_hit_rate": item_cache_hit_rate,
         "attempt_rpm": item_attempt_rpm,
         "attempt_tpm": item_attempt_tpm,
         "success_rate": item_success_rate,
@@ -199,6 +223,10 @@ def _dashboard_task_item(
         "completed_at": task.completed_at,
         "rpm": item_rpm,
         "tpm": item_tpm,
+        "cache_hit_tpm": item_cache_hit_tpm,
+        "cache_inclusive_tpm": item_cache_inclusive_tpm,
+        "cached_input_tokens": item_cached_input_tokens,
+        "cache_hit_rate": item_cache_hit_rate,
         "attempt_rpm": item_attempt_rpm,
         "attempt_tpm": item_attempt_tpm,
         "success_rate": item_success_rate,
@@ -553,6 +581,14 @@ async def realtime_dashboard(
     sources = metric_sources
     rpm = sum(_num(item.get("rpm")) for item in sources)
     tpm = sum(_num(item.get("tpm")) for item in sources)
+    cache_hit_tpm = sum(_num(item.get("cache_hit_tpm")) for item in sources)
+    cache_inclusive_tpm = sum(_num(item.get("cache_inclusive_tpm")) for item in sources)
+    cached_input_tokens = sum(_num(item.get("cached_input_tokens")) for item in sources)
+    cache_rate_values = [
+        _num(item.get("cache_hit_rate"))
+        for item in sources
+        if item.get("cache_hit_rate") is not None
+    ]
     attempt_rpm = sum(_num(item.get("attempt_rpm")) for item in sources)
     attempt_tpm = sum(_num(item.get("attempt_tpm")) for item in sources)
     expected_rpm = sum(_num(item.get("rpm")) for item in target_sources if item.get("rpm") is not None)
@@ -582,6 +618,10 @@ async def realtime_dashboard(
         "metrics": {
             "rpm": round(rpm, 4),
             "tpm": round(tpm, 4),
+            "cache_hit_tpm": round(cache_hit_tpm, 4),
+            "cache_inclusive_tpm": round(cache_inclusive_tpm, 4),
+            "cached_input_tokens": round(cached_input_tokens, 4),
+            "cache_hit_rate": round(sum(cache_rate_values) / len(cache_rate_values), 4) if cache_rate_values else 0.0,
             "attempt_rpm": round(attempt_rpm, 4),
             "attempt_tpm": round(attempt_tpm, 4),
             "expected_rpm": round(expected_rpm, 4) if expected_rpm else None,

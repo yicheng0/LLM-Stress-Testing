@@ -10,8 +10,8 @@ from typing import Awaitable, Callable, Optional
 import aiohttp
 
 from .config import LoadTestConfig
-from .models import RequestResult
-from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_tokens
+from .models import RequestResult, TokenUsage
+from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_token_usage
 from .streaming import SseStreamParser
 
 BackoffFactory = Callable[[int], float]
@@ -113,12 +113,17 @@ class RequestExecutor:
         ttft: Optional[float] = None,
         output_tokens: int = 0,
         total_tokens: Optional[int] = None,
+        cached_input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+        cache_inclusive_total_tokens: Optional[int] = None,
         error_type: Optional[str] = None,
         error_message: Optional[str] = None,
         attempt: int = 1,
     ) -> RequestResult:
         if total_tokens is None:
             total_tokens = self.actual_input_tokens + output_tokens
+        if cache_inclusive_total_tokens is None:
+            cache_inclusive_total_tokens = total_tokens
         return RequestResult(
             request_id=request_id,
             ok=ok,
@@ -133,6 +138,40 @@ class RequestExecutor:
             error_type=error_type,
             error_message=error_message,
             retry_count=attempt - 1,
+            cached_input_tokens=cached_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_inclusive_total_tokens=cache_inclusive_total_tokens,
+        )
+
+    def create_result_from_usage(
+        self,
+        request_id: int,
+        started_at: float,
+        request_started_perf: float,
+        ok: bool,
+        status: int,
+        usage: TokenUsage,
+        *,
+        ttft: Optional[float] = None,
+        error_type: Optional[str] = None,
+        error_message: Optional[str] = None,
+        attempt: int = 1,
+    ) -> RequestResult:
+        return self.create_result(
+            request_id,
+            started_at,
+            request_started_perf,
+            ok,
+            status,
+            ttft=ttft,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens if usage.total_tokens > 0 else None,
+            cached_input_tokens=usage.cached_input_tokens,
+            cache_creation_input_tokens=usage.cache_creation_input_tokens,
+            cache_inclusive_total_tokens=usage.cache_inclusive_total_tokens if usage.cache_inclusive_total_tokens > 0 else None,
+            error_type=error_type,
+            error_message=error_message,
+            attempt=attempt,
         )
 
     async def send_one(self, session: aiohttp.ClientSession, request_id: int) -> RequestResult:
@@ -146,7 +185,7 @@ class RequestExecutor:
                     if 200 <= resp.status < 300:
                         if self.config.enable_stream:
                             try:
-                                ttft, output_tokens, total_tokens, protocol_error = await self.stream_parser.parse_stream(resp.content, t0)
+                                ttft, token_usage, protocol_error = await self.stream_parser.parse_stream_usage(resp.content, t0)
                                 if protocol_error:
                                     return self.create_result(
                                         request_id,
@@ -161,15 +200,14 @@ class RequestExecutor:
                                         error_message=protocol_error,
                                         attempt=attempt,
                                     )
-                                return self.create_result(
+                                return self.create_result_from_usage(
                                     request_id,
                                     started_at,
                                     t0,
                                     True,
                                     resp.status,
+                                    token_usage,
                                     ttft=ttft,
-                                    output_tokens=output_tokens,
-                                    total_tokens=total_tokens if total_tokens > 0 else None,
                                     attempt=attempt,
                                 )
                             except Exception as exc:
@@ -205,17 +243,16 @@ class RequestExecutor:
                                         attempt=attempt,
                                     )
                                 usage = data.get("usage") or data.get("usageMetadata") or {}
-                            output_tokens, total_tokens = extract_tokens(usage)
+                            token_usage = extract_token_usage(usage)
                         except Exception:
-                            output_tokens, total_tokens = 0, 0
-                        return self.create_result(
+                            token_usage = TokenUsage()
+                        return self.create_result_from_usage(
                             request_id,
                             started_at,
                             t0,
                             True,
                             resp.status,
-                            output_tokens=output_tokens,
-                            total_tokens=total_tokens if total_tokens > 0 else None,
+                            token_usage,
                             attempt=attempt,
                         )
 

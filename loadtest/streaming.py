@@ -6,19 +6,24 @@ from typing import Any, Optional
 
 import aiohttp
 
-from .protocols import extract_protocol_error, extract_tokens
+from .models import TokenUsage
+from .protocols import extract_protocol_error, extract_token_usage, extract_tokens
 
 
 class SseStreamParser:
     @staticmethod
     def parse_usage_text(stream_text: str) -> tuple[int, int]:
-        output_tokens = 0
-        total_tokens = 0
+        usage = SseStreamParser.parse_token_usage_text(stream_text)
+        return usage.output_tokens, usage.total_tokens
+
+    @staticmethod
+    def parse_token_usage_text(stream_text: str) -> TokenUsage:
+        token_usage = TokenUsage()
         for data in SseStreamParser.iter_sse_json(stream_text):
             usage = SseStreamParser.extract_usage(data)
             if isinstance(usage, dict):
-                output_tokens, total_tokens = extract_tokens(usage)
-        return output_tokens, total_tokens
+                token_usage = extract_token_usage(usage)
+        return token_usage
 
     @staticmethod
     def iter_sse_json(text: str):
@@ -48,10 +53,17 @@ class SseStreamParser:
         content: aiohttp.StreamReader,
         request_started_perf: float,
     ) -> tuple[Optional[float], int, int, Optional[str]]:
+        ttft, token_usage, protocol_error = await self.parse_stream_usage(content, request_started_perf)
+        return ttft, token_usage.output_tokens, token_usage.total_tokens, protocol_error
+
+    async def parse_stream_usage(
+        self,
+        content: aiohttp.StreamReader,
+        request_started_perf: float,
+    ) -> tuple[Optional[float], TokenUsage, Optional[str]]:
         buffer = bytearray()
         ttft = None
-        output_tokens = 0
-        total_tokens = 0
+        token_usage = TokenUsage()
         protocol_error = None
         async for chunk in content.iter_any():
             if ttft is None and chunk:
@@ -77,5 +89,5 @@ class SseStreamParser:
                 protocol_error = extract_protocol_error(data_obj) or protocol_error
                 usage = self.extract_usage(data_obj)
                 if usage:
-                    output_tokens, total_tokens = extract_tokens(usage)
-        return ttft, output_tokens, total_tokens, protocol_error
+                    token_usage = extract_token_usage(usage)
+        return ttft, token_usage, protocol_error

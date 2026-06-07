@@ -19,6 +19,18 @@ class RequestResult:
     error_type: Optional[str]
     error_message: Optional[str]
     retry_count: int
+    cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_inclusive_total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_inclusive_total_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -62,4 +74,3 @@ PROTOCOL_SPECS: Dict[str, ProtocolSpec] = {
 }
 
 LEGACY_DEFAULT_ENDPOINTS = {"/chat/completions", "/responses", "/messages"}
-

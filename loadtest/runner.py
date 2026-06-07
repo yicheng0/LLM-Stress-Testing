@@ -16,9 +16,9 @@ from .executor import RequestExecutor
 from .metrics import percentile, percentile_metrics, throughput_metrics
 from .models import RequestResult
 from .prompt import PromptFactory, TokenEstimator
-from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_tokens, protocol_spec
+from .protocols import build_headers, build_payload, build_url, extract_protocol_error, extract_token_usage, extract_tokens, protocol_spec
 from .streaming import SseStreamParser
-from .summary import MetricsAccumulator, retry_attempt_count, retry_attempt_tokens
+from .summary import MetricsAccumulator, cache_hit_rate, retry_attempt_count, retry_attempt_tokens
 
 ProgressCallback = Callable[[Dict[str, Any]], Awaitable[None] | None]
 LogCallback = Callable[[str, str], Awaitable[None] | None]
@@ -85,6 +85,8 @@ class LoadTestRunner:
         self._success_count = 0
         self._failure_count = 0
         self._success_token_count = 0
+        self._success_cached_input_count = 0
+        self._success_cache_inclusive_token_count = 0
         self._attempt_count = 0
         self._attempt_token_count = 0
         self._success_latency_window: deque[float] = deque(maxlen=10)
@@ -209,6 +211,8 @@ class LoadTestRunner:
         if result.ok:
             self._success_count += 1
             self._success_token_count += result.total_tokens
+            self._success_cached_input_count += result.cached_input_tokens
+            self._success_cache_inclusive_token_count += result.cache_inclusive_total_tokens or result.total_tokens
             self._success_latency_window.append(result.latency_sec)
         else:
             self._failure_count += 1
@@ -232,6 +236,14 @@ class LoadTestRunner:
             "current_qps": round(self._success_count / elapsed, 4),
             "current_rpm": round(self._success_count * 60 / elapsed, 4),
             "current_tpm": round(self._success_token_count * 60 / elapsed, 4),
+            "current_cache_hit_tpm": round(self._success_cached_input_count * 60 / elapsed, 4),
+            "current_cache_inclusive_tpm": round(self._success_cache_inclusive_token_count * 60 / elapsed, 4),
+            "current_cached_input_tokens": self._success_cached_input_count,
+            "current_cache_hit_rate": cache_hit_rate(
+                self._success_cached_input_count,
+                self.metrics_accumulator.total_cache_creation_input_tokens,
+                self.metrics_accumulator.total_input_tokens,
+            ),
             "attempt_qps": round(self._attempt_count / elapsed, 4),
             "attempt_rpm": round(self._attempt_count * 60 / elapsed, 4),
             "attempt_tpm": round(self._attempt_token_count * 60 / elapsed, 4),
@@ -287,6 +299,9 @@ class LoadTestRunner:
         ttft: Optional[float] = None,
         output_tokens: int = 0,
         total_tokens: Optional[int] = None,
+        cached_input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
+        cache_inclusive_total_tokens: Optional[int] = None,
         error_type: Optional[str] = None,
         error_message: Optional[str] = None,
         attempt: int = 1,
@@ -300,6 +315,9 @@ class LoadTestRunner:
             ttft=ttft,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_inclusive_total_tokens=cache_inclusive_total_tokens,
             error_type=error_type,
             error_message=error_message,
             attempt=attempt,
@@ -328,6 +346,10 @@ class LoadTestRunner:
     @staticmethod
     def _extract_tokens(usage: dict) -> tuple[int, int]:
         return extract_tokens(usage)
+
+    @staticmethod
+    def _extract_token_usage(usage: dict):
+        return extract_token_usage(usage)
 
     @staticmethod
     def _extract_protocol_error(data: Any) -> str | None:
@@ -472,6 +494,8 @@ class LoadTestRunner:
                 self._success_count = 0
                 self._failure_count = 0
                 self._success_token_count = 0
+                self._success_cached_input_count = 0
+                self._success_cache_inclusive_token_count = 0
                 self._attempt_count = 0
                 self._attempt_token_count = 0
                 self._success_latency_window.clear()

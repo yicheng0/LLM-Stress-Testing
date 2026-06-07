@@ -38,6 +38,7 @@
           <div class="diagnosis-ratios">
             <span>有效 RPM {{ formatAchievement(rpmAchievement) }}</span>
             <span>有效 TPM {{ formatAchievement(tpmAchievement) }}</span>
+            <span>含缓存 TPM {{ formatAchievement(cacheInclusiveTpmAchievement) }}</span>
             <span>含重试 RPM {{ formatAchievement(attemptRpmAchievement) }}</span>
             <span>含重试 TPM {{ formatAchievement(attemptTpmAchievement) }}</span>
             <span>成功率 {{ percent(aggregate.successRate) }}</span>
@@ -89,9 +90,9 @@
             <el-icon><component :is="Histogram" /></el-icon>
           </div>
           <div>
-            <div class="live-card-label">含重试 TPM</div>
-            <div class="live-card-value">{{ hasActiveTasks ? number(aggregate.attemptTpm) : '-' }}</div>
-            <div class="live-card-sub">{{ hasActiveTasks ? `对照有效 ${number(aggregate.tpm)}` : '暂无运行任务' }}</div>
+            <div class="live-card-label">含缓存 TPM</div>
+            <div class="live-card-value">{{ hasActiveTasks ? number(aggregate.cacheInclusiveTpm) : '-' }}</div>
+            <div class="live-card-sub">{{ hasActiveTasks ? `缓存命中 ${number(aggregate.cacheHitTpm)} / ${percent(aggregate.cacheHitRate)}` : '暂无运行任务' }}</div>
           </div>
         </div>
       </div>
@@ -108,7 +109,7 @@
         <div class="chart-tile large">
           <div class="tile-header">
             <h3>吞吐实时趋势</h3>
-            <span>有效 / 含重试 / 目标线</span>
+            <span>有效 / 含缓存 / 含重试 / 目标线</span>
           </div>
           <div ref="trendEl" class="live-chart" />
         </div>
@@ -168,8 +169,8 @@
               <span class="activity-metrics">
                 <span><strong>{{ number(item.rpm) }}</strong><em>RPM</em></span>
                 <span><strong>{{ number(item.tpm) }}</strong><em>TPM</em></span>
-                <span><strong>{{ number(item.attempt_rpm) }}</strong><em>含重试 RPM</em></span>
-                <span><strong>{{ number(item.attempt_tpm) }}</strong><em>含重试 TPM</em></span>
+                <span><strong>{{ number(item.cache_inclusive_tpm) }}</strong><em>含缓存 TPM</em></span>
+                <span><strong>{{ number(item.cache_hit_tpm) }}</strong><em>缓存命中 TPM</em></span>
                 <span><strong>{{ percent(item.success_rate) }}</strong><em>成功率</em></span>
                 <span><strong>{{ seconds(item.latency_p95) }}</strong><em>P95</em></span>
               </span>
@@ -233,6 +234,10 @@ const aggregate = computed(() => {
   return {
     rpm: numeric(metrics.rpm),
     tpm: numeric(metrics.tpm),
+    cacheHitTpm: numeric(metrics.cache_hit_tpm),
+    cacheInclusiveTpm: numeric(metrics.cache_inclusive_tpm),
+    cachedInputTokens: numeric(metrics.cached_input_tokens),
+    cacheHitRate: numeric(metrics.cache_hit_rate, null),
     attemptRpm: numeric(metrics.attempt_rpm),
     attemptTpm: numeric(metrics.attempt_tpm),
     expectedRpm: numeric(metrics.expected_rpm, null),
@@ -254,6 +259,7 @@ const freshness = computed(() => {
 })
 const rpmAchievement = computed(() => achievementRatio(aggregate.value.rpm, aggregate.value.expectedRpm))
 const tpmAchievement = computed(() => achievementRatio(aggregate.value.tpm, aggregate.value.expectedTpm))
+const cacheInclusiveTpmAchievement = computed(() => achievementRatio(aggregate.value.cacheInclusiveTpm, aggregate.value.expectedTpm))
 const attemptRpmAchievement = computed(() => achievementRatio(aggregate.value.attemptRpm, aggregate.value.expectedRpm))
 const attemptTpmAchievement = computed(() => achievementRatio(aggregate.value.attemptTpm, aggregate.value.expectedTpm))
 const minAchievement = computed(() => {
@@ -331,7 +337,7 @@ const diagnosticItems = computed(() => [
   {
     label: '目标达成',
     value: minAchievement.value === null ? '暂无目标' : formatAchievement(minAchievement.value),
-    hint: `有效 RPM ${formatAchievement(rpmAchievement.value)} · 有效 TPM ${formatAchievement(tpmAchievement.value)} · 含重试 RPM ${formatAchievement(attemptRpmAchievement.value)} · 含重试 TPM ${formatAchievement(attemptTpmAchievement.value)}`,
+    hint: `有效 RPM ${formatAchievement(rpmAchievement.value)} · 有效 TPM ${formatAchievement(tpmAchievement.value)} · 含缓存 TPM ${formatAchievement(cacheInclusiveTpmAchievement.value)} · 含重试 TPM ${formatAchievement(attemptTpmAchievement.value)}`,
     type: minAchievement.value === null || minAchievement.value >= 0.9 ? 'ok' : minAchievement.value >= 0.6 ? 'warning' : 'danger'
   },
   {
@@ -377,11 +383,12 @@ function pushSample() {
     {
       time: now,
       rpm: Math.round(aggregate.value.rpm * 100) / 100,
-        tpm: Math.round(aggregate.value.tpm),
-        attemptRpm: Math.round(aggregate.value.attemptRpm * 100) / 100,
-        attemptTpm: Math.round(aggregate.value.attemptTpm),
-        expectedRpm: aggregate.value.expectedRpm,
-        expectedTpm: aggregate.value.expectedTpm,
+      tpm: Math.round(aggregate.value.tpm),
+      cacheInclusiveTpm: Math.round(aggregate.value.cacheInclusiveTpm),
+      attemptRpm: Math.round(aggregate.value.attemptRpm * 100) / 100,
+      attemptTpm: Math.round(aggregate.value.attemptTpm),
+      expectedRpm: aggregate.value.expectedRpm,
+      expectedTpm: aggregate.value.expectedTpm,
       successRate: aggregate.value.successRate === null ? 0 : Math.round(aggregate.value.successRate * 10000) / 100
     }
   ]
@@ -401,7 +408,7 @@ async function renderCharts() {
 
 function trendOption() {
   return {
-    color: ['#2563eb', '#8b5cf6', '#f97316', '#0f172a', '#94a3b8', '#f59e0b'],
+    color: ['#2563eb', '#8b5cf6', '#0f766e', '#f97316', '#0f172a', '#94a3b8', '#f59e0b'],
     tooltip: { trigger: 'axis' },
     legend: { top: 0 },
     grid: { left: 50, right: 50, top: 42, bottom: 34 },
@@ -413,6 +420,7 @@ function trendOption() {
     series: [
       { name: '有效 RPM', type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.12 }, data: samples.value.map((item) => item.rpm) },
       { name: '有效 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, areaStyle: { opacity: 0.1 }, data: samples.value.map((item) => item.tpm) },
+      { name: '含缓存 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.cacheInclusiveTpm) },
       { name: '含重试 RPM', type: 'line', smooth: true, showSymbol: false, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.attemptRpm) },
       { name: '含重试 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.attemptTpm) },
       { name: '目标 RPM', type: 'line', showSymbol: false, lineStyle: { type: 'dashed' }, data: samples.value.map((item) => item.expectedRpm) },

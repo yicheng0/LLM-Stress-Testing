@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit, urlunparse
 
-from .models import LEGACY_DEFAULT_ENDPOINTS, PROTOCOL_SPECS, ProtocolSpec
+from .models import LEGACY_DEFAULT_ENDPOINTS, PROTOCOL_SPECS, ProtocolSpec, TokenUsage
 
 PROTOCOL_VERSION_PREFIX = {
     "openai": "/v1",
@@ -168,23 +168,76 @@ def build_url(base_url: str, endpoint: str, protocol: str, *, model: str | None 
     return build_request_url(base_url, endpoint, protocol, model=model)
 
 
-def extract_tokens(usage: dict) -> tuple[int, int]:
-    output_tokens = int(
+def _to_int(value: Any) -> int:
+    try:
+        if value is None:
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _nested_int(data: dict[str, Any], *path: str) -> int:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict):
+            return 0
+        current = current.get(key)
+    return _to_int(current)
+
+
+def extract_token_usage(usage: dict) -> TokenUsage:
+    output_tokens = _to_int(
         usage.get("completion_tokens")
         or usage.get("output_tokens")
         or usage.get("candidatesTokenCount")
-        or 0
     )
-    input_tokens = int(
+    input_tokens = _to_int(
         usage.get("prompt_tokens")
         or usage.get("input_tokens")
         or usage.get("promptTokenCount")
-        or 0
     )
-    total_tokens = int(usage.get("total_tokens") or usage.get("totalTokenCount") or 0)
+    total_tokens = _to_int(usage.get("total_tokens") or usage.get("totalTokenCount"))
+
+    cached_input_tokens = max(
+        _nested_int(usage, "prompt_tokens_details", "cached_tokens"),
+        _nested_int(usage, "input_tokens_details", "cached_tokens"),
+        _to_int(usage.get("cachedContentTokenCount")),
+        _to_int(usage.get("cache_read_input_tokens")),
+        _to_int(usage.get("prompt_cache_hit_tokens")),
+    )
+    cache_creation_input_tokens = _to_int(usage.get("cache_creation_input_tokens"))
+    cache_miss_tokens = _to_int(usage.get("prompt_cache_miss_tokens"))
+
+    total_tokens_from_usage = total_tokens > 0
     if total_tokens <= 0 and (input_tokens or output_tokens):
         total_tokens = input_tokens + output_tokens
-    return output_tokens, total_tokens
+
+    # Anthropic reports cache read/write tokens separately from input_tokens, so
+    # cache-inclusive input needs to add them explicitly. OpenAI and Gemini
+    # total token fields already include cached prompt content.
+    if usage.get("cache_read_input_tokens") is not None or usage.get("cache_creation_input_tokens") is not None:
+        cache_inclusive_total_tokens = input_tokens + output_tokens + cached_input_tokens + cache_creation_input_tokens
+    elif cache_miss_tokens and not total_tokens_from_usage and input_tokens <= 0:
+        cache_inclusive_total_tokens = cached_input_tokens + cache_miss_tokens + output_tokens
+    else:
+        cache_inclusive_total_tokens = total_tokens
+
+    if cache_inclusive_total_tokens <= 0:
+        cache_inclusive_total_tokens = total_tokens
+
+    return TokenUsage(
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cached_input_tokens=cached_input_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_inclusive_total_tokens=cache_inclusive_total_tokens,
+    )
+
+
+def extract_tokens(usage: dict) -> tuple[int, int]:
+    parsed = extract_token_usage(usage)
+    return parsed.output_tokens, parsed.total_tokens
 
 
 def extract_protocol_error(data: Any) -> str | None:

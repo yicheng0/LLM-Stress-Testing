@@ -220,11 +220,15 @@ class TaskManager:
             total_requests = 0
             successful_requests = 0
             best_tpm = 0.0
+            best_cache_inclusive_tpm = 0.0
+            best_cache_hit_tpm = 0.0
             for point in points:
                 results = point.get("results") or {}
                 total_requests += int(results.get("total_requests") or 0)
                 successful_requests += int(results.get("successful_requests") or 0)
                 best_tpm = max(best_tpm, float(results.get("total_tpm") or 0))
+                best_cache_inclusive_tpm = max(best_cache_inclusive_tpm, float(results.get("cache_inclusive_tpm") or 0))
+                best_cache_hit_tpm = max(best_cache_hit_tpm, float(results.get("cache_hit_tpm") or 0))
                 for key, value in (results.get("error_counts") or {}).items():
                     merged_errors[key] = merged_errors.get(key, 0) + int(value or 0)
             return {
@@ -232,6 +236,8 @@ class TaskManager:
                 "successful_requests": successful_requests,
                 "success_rate": successful_requests / total_requests if total_requests else None,
                 "total_tpm": best_tpm,
+                "cache_inclusive_tpm": best_cache_inclusive_tpm,
+                "cache_hit_tpm": best_cache_hit_tpm,
                 "error_counts": merged_errors,
             }
         return summary.get("results") or {}

@@ -30,7 +30,7 @@ from loadtest.executor import RequestExecutor
 from loadtest.metrics import percentile, percentile_metrics
 from loadtest.runner import LoadTestRunner, matrix_result_key, should_reuse_matrix_result
 from loadtest.models import RequestResult
-from loadtest.protocols import build_payload
+from loadtest.protocols import build_payload, extract_token_usage
 from loadtest.reports import render_html_report, render_markdown_report
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
@@ -197,6 +197,43 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertEqual(legacy_summary["results"]["attempt_tokens"], results_summary["attempt_tokens"])
         self.assertGreater(results_summary["attempt_rpm"], results_summary["rpm"])
         self.assertGreater(results_summary["attempt_tpm"], results_summary["total_tpm"])
+
+    def test_cache_metrics_are_reported_in_summary(self):
+        config = LoadTestConfig(duration_sec=10, warmup_requests=0)
+        results = [
+            result(
+                request_id=1,
+                input_tokens=100,
+                output_tokens=20,
+                total_tokens=120,
+                cached_input_tokens=40,
+                cache_creation_input_tokens=10,
+                cache_inclusive_total_tokens=170,
+            ),
+            result(
+                request_id=2,
+                input_tokens=80,
+                output_tokens=20,
+                total_tokens=100,
+                cached_input_tokens=20,
+                cache_creation_input_tokens=0,
+                cache_inclusive_total_tokens=100,
+            ),
+        ]
+
+        accumulator = MetricsAccumulator()
+        for item in results:
+            accumulator.record(item)
+
+        summary = accumulator.build_summary(config, actual_input_tokens=100, started_at=0)
+        results_summary = summary["results"]
+
+        self.assertEqual(results_summary["total_cached_input_tokens"], 60)
+        self.assertEqual(results_summary["total_cache_creation_input_tokens"], 10)
+        self.assertEqual(results_summary["total_cache_inclusive_tokens"], 270)
+        self.assertEqual(results_summary["cache_hit_tpm"], 360.0)
+        self.assertEqual(results_summary["cache_inclusive_tpm"], 1620.0)
+        self.assertEqual(results_summary["cache_hit_rate"], 0.3333)
 
     def test_retry_metrics_inclusive_for_failed_results(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)
@@ -739,6 +776,59 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["batch_total_tests"], 2)
 
 
+class TokenUsageParsingTest(unittest.TestCase):
+    def test_openai_cached_tokens_do_not_double_count_total(self):
+        usage = extract_token_usage({
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": {"cached_tokens": 40},
+        })
+
+        self.assertEqual(usage.output_tokens, 20)
+        self.assertEqual(usage.total_tokens, 120)
+        self.assertEqual(usage.cached_input_tokens, 40)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 120)
+
+    def test_anthropic_cache_read_and_creation_are_cache_inclusive(self):
+        usage = extract_token_usage({
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 40,
+            "cache_creation_input_tokens": 10,
+        })
+
+        self.assertEqual(usage.output_tokens, 20)
+        self.assertEqual(usage.total_tokens, 120)
+        self.assertEqual(usage.cached_input_tokens, 40)
+        self.assertEqual(usage.cache_creation_input_tokens, 10)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 170)
+
+    def test_gemini_cached_content_does_not_double_count_total(self):
+        usage = extract_token_usage({
+            "promptTokenCount": 100,
+            "candidatesTokenCount": 20,
+            "totalTokenCount": 120,
+            "cachedContentTokenCount": 40,
+        })
+
+        self.assertEqual(usage.output_tokens, 20)
+        self.assertEqual(usage.total_tokens, 120)
+        self.assertEqual(usage.cached_input_tokens, 40)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 120)
+
+    def test_gateway_prompt_cache_hit_tokens_are_supported(self):
+        usage = extract_token_usage({
+            "prompt_cache_hit_tokens": 40,
+            "prompt_cache_miss_tokens": 60,
+            "completion_tokens": 20,
+        })
+
+        self.assertEqual(usage.cached_input_tokens, 40)
+        self.assertEqual(usage.total_tokens, 20)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 120)
+
+
 class RequestPayloadTemperatureTest(unittest.TestCase):
     def test_payload_omits_temperature_when_none(self):
         cases = [
@@ -866,6 +956,76 @@ class DashboardRepositoryTest(unittest.TestCase):
         self.assertEqual(snapshot["recent_rows"][0][0].id, "task-1")
         self.assertEqual(snapshot["active_rows"][0][0].id, "task-1")
 
+    def test_dashboard_task_item_includes_cache_metrics_from_progress_and_summary(self):
+        task = DbTestTask(
+            id="task-cache",
+            name="Task",
+            api_protocol="openai",
+            base_url="https://example.com",
+            endpoint="/v1/chat/completions",
+            model="gpt-5.5",
+            status="running",
+            concurrency=1,
+            duration_sec=1,
+            input_tokens=1,
+            max_output_tokens=1,
+            enable_stream=True,
+            matrix_mode=False,
+            config_json=json.dumps({"api_protocol": "openai"}),
+            created_at=datetime.now(UTC),
+        )
+        result_row = DbTestResult(
+            task_id="task-cache",
+            summary_json=json.dumps({
+                "results": {
+                    "rpm": 1,
+                    "total_tpm": 100,
+                    "cache_hit_tpm": 20,
+                    "cache_inclusive_tpm": 120,
+                    "total_cached_input_tokens": 40,
+                    "cache_hit_rate": 0.25,
+                },
+            }),
+        )
+
+        class FakeProgressHub:
+            def snapshot(self, task_id):
+                return {
+                    "current_rpm": 2,
+                    "current_tpm": 200,
+                    "current_cache_hit_tpm": 60,
+                    "current_cache_inclusive_tpm": 260,
+                    "current_cached_input_tokens": 80,
+                    "current_cache_hit_rate": 0.4,
+                }
+
+        task_item, metric_item, _targets, _is_active = tests_api._dashboard_task_item(
+            task,
+            result_row,
+            FakeProgressHub(),
+            {"running"},
+        )
+
+        self.assertEqual(task_item["cache_hit_tpm"], 60)
+        self.assertEqual(task_item["cache_inclusive_tpm"], 260)
+        self.assertEqual(task_item["cached_input_tokens"], 80)
+        self.assertEqual(task_item["cache_hit_rate"], 0.4)
+        self.assertEqual(metric_item["cache_hit_tpm"], 60)
+
+        task.status = "completed"
+        task_item, metric_item, _targets, _is_active = tests_api._dashboard_task_item(
+            task,
+            result_row,
+            FakeProgressHub(),
+            {"running"},
+        )
+
+        self.assertEqual(task_item["cache_hit_tpm"], 20)
+        self.assertEqual(task_item["cache_inclusive_tpm"], 120)
+        self.assertEqual(task_item["cached_input_tokens"], 40)
+        self.assertEqual(task_item["cache_hit_rate"], 0.25)
+        self.assertEqual(metric_item["cache_inclusive_tpm"], 120)
+
 
 class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
     async def test_manual_stop_cancels_in_flight_request(self):
@@ -960,12 +1120,23 @@ class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
         runner.test_start_wall_time = time.time() - 10
         runner._success_count = 1
         runner._success_token_count = 120
+        runner._success_cached_input_count = 40
+        runner._success_cache_inclusive_token_count = 120
+        runner.metrics_accumulator.total_input_tokens = 100
+        runner.metrics_accumulator.total_cached_input_tokens = 40
         runner._attempt_count = 3
         runner._attempt_token_count = 300
         runner.metrics_accumulator.total_requests = 1
 
         await runner.emit_progress(force=True)
 
+        self.assertIn("current_cache_hit_tpm", captured)
+        self.assertIn("current_cache_inclusive_tpm", captured)
+        self.assertIn("current_cached_input_tokens", captured)
+        self.assertIn("current_cache_hit_rate", captured)
+        self.assertGreater(captured["current_cache_hit_tpm"], 0)
+        self.assertGreater(captured["current_cache_inclusive_tpm"], 0)
+        self.assertEqual(captured["current_cached_input_tokens"], 40)
         self.assertIn("attempt_rpm", captured)
         self.assertIn("attempt_tpm", captured)
         self.assertGreater(captured["attempt_rpm"], captured["current_rpm"])
@@ -996,6 +1167,33 @@ class StreamParserTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(ttft)
         self.assertEqual(output_tokens, 3)
         self.assertEqual(total_tokens, 5)
+        self.assertIsNone(protocol_error)
+
+    async def test_parse_stream_usage_includes_cache_tokens(self):
+        parser = SseStreamParser()
+
+        class FakeContent:
+            def __init__(self, chunks):
+                self._chunks = chunks
+
+            def iter_any(self):
+                async def generator():
+                    for chunk in self._chunks:
+                        yield chunk
+                return generator()
+
+        chunks = [
+            b"data: {\"usage\":{\"completion_tokens\":3,\"prompt_tokens\":2,",
+            b"\"total_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":2}}}\n",
+            b"data: [DONE]\n",
+        ]
+        ttft, usage, protocol_error = await parser.parse_stream_usage(FakeContent(chunks), time.perf_counter())
+
+        self.assertIsNotNone(ttft)
+        self.assertEqual(usage.output_tokens, 3)
+        self.assertEqual(usage.total_tokens, 5)
+        self.assertEqual(usage.cached_input_tokens, 2)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 5)
         self.assertIsNone(protocol_error)
 
 

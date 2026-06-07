@@ -4,7 +4,7 @@ from .config import LoadTestConfig
 from .chart_data import build_matrix_chart_data, build_single_chart_data
 from .executor import RequestExecutor
 from .metrics import _aggregate_by_time_window, _calculate_histogram
-from .models import PROTOCOL_SPECS, ProtocolSpec, RequestResult
+from .models import PROTOCOL_SPECS, ProtocolSpec, RequestResult, TokenUsage
 from .prompt import PromptFactory, TokenEstimator
 from .result_writer import ReportArtifactWriter, StreamingResultCollector
 from .reports import (
@@ -32,6 +32,7 @@ __all__ = [
     "RequestExecutor",
     "RequestResult",
     "SseStreamParser",
+    "TokenUsage",
     "TokenEstimator",
     "_aggregate_by_time_window",
     "_calculate_histogram",

@@ -159,6 +159,12 @@ const metricItems = computed(() => [
     color: '#f97316'
   },
   {
+    label: '含缓存 TPM',
+    value: formatNumber(progress.value?.current_cache_inclusive_tpm),
+    sub: `缓存命中 ${formatNumber(progress.value?.current_cache_hit_tpm)}`,
+    color: '#0f766e'
+  },
+  {
     label: '成功率',
     value: formatPercent(progress.value?.success_rate),
     sub: `${formatNumber(progress.value?.successful_requests)} / ${formatNumber(progress.value?.completed_requests)}`,
@@ -176,6 +182,7 @@ const expectedMetrics = computed(() => task.value?.expected_metrics || task.valu
 const hasExpectedMetrics = computed(() => Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
 const rpmAchievement = computed(() => achievementRatio(progress.value?.current_rpm, expectedMetrics.value?.expected_rpm))
 const tpmAchievement = computed(() => achievementRatio(progress.value?.current_tpm, expectedMetrics.value?.expected_tpm))
+const cacheInclusiveTpmAchievement = computed(() => achievementRatio(progress.value?.current_cache_inclusive_tpm, expectedMetrics.value?.expected_tpm))
 const achievementStatus = computed(() => {
   const ratios = [rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null)
   if (!ratios.length) return { label: '等待数据', type: 'info' }
@@ -196,6 +203,12 @@ const achievementItems = computed(() => [
     value: formatAchievement(tpmAchievement.value),
     sub: `${formatNumber(progress.value?.current_tpm)} / ${formatNumber(expectedMetrics.value?.expected_tpm)}`,
     color: achievementColor(tpmAchievement.value)
+  },
+  {
+    label: '含缓存 TPM 达成率',
+    value: formatAchievement(cacheInclusiveTpmAchievement.value),
+    sub: `${formatNumber(progress.value?.current_cache_inclusive_tpm)} / ${formatNumber(expectedMetrics.value?.expected_tpm)}`,
+    color: achievementColor(cacheInclusiveTpmAchievement.value)
   },
   {
     label: '预期 TPS',

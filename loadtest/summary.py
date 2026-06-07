@@ -18,6 +18,28 @@ def retry_attempt_tokens(result: RequestResult) -> int:
     return result.input_tokens * attempts + (result.output_tokens if result.ok else 0)
 
 
+def cache_hit_rate(cached_input_tokens: int, cache_creation_input_tokens: int, total_input_tokens: int) -> float:
+    denominator = max(total_input_tokens, cached_input_tokens + cache_creation_input_tokens)
+    return round(cached_input_tokens / denominator, 4) if denominator > 0 else 0.0
+
+
+def cache_throughput_metrics(
+    cached_input_tokens: int,
+    cache_creation_input_tokens: int,
+    cache_inclusive_tokens: int,
+    total_input_tokens: int,
+    wall_time: float,
+) -> dict[str, Any]:
+    return {
+        "total_cached_input_tokens": cached_input_tokens,
+        "total_cache_creation_input_tokens": cache_creation_input_tokens,
+        "total_cache_inclusive_tokens": cache_inclusive_tokens,
+        "cache_hit_tpm": round(cached_input_tokens * 60 / wall_time, 2) if wall_time > 0 else 0.0,
+        "cache_inclusive_tpm": round(cache_inclusive_tokens * 60 / wall_time, 2) if wall_time > 0 else 0.0,
+        "cache_hit_rate": cache_hit_rate(cached_input_tokens, cache_creation_input_tokens, total_input_tokens),
+    }
+
+
 class MetricsSummaryBuilder:
     def __init__(self, config: LoadTestConfig):
         self.config = config
@@ -38,6 +60,9 @@ class MetricsSummaryBuilder:
         total_input_tokens = sum(r.input_tokens for r in success)
         total_output_tokens = sum(r.output_tokens for r in success)
         total_tokens = sum(r.total_tokens for r in success)
+        total_cached_input_tokens = sum(r.cached_input_tokens for r in success)
+        total_cache_creation_input_tokens = sum(r.cache_creation_input_tokens for r in success)
+        total_cache_inclusive_tokens = sum(r.cache_inclusive_total_tokens or r.total_tokens for r in success)
         attempt_requests = sum(retry_attempt_count(r) for r in results)
         attempt_tokens = sum(retry_attempt_tokens(r) for r in results)
         ttfts = [r.ttft_sec for r in success if r.ttft_sec is not None]
@@ -78,6 +103,13 @@ class MetricsSummaryBuilder:
                 "attempt_rpm": round(attempt_rpm, 4) if wall_time > 0 else 0.0,
                 "attempt_tpm": round(attempt_tpm, 2) if wall_time > 0 else 0.0,
                 **throughput_metrics(total_input_tokens, total_output_tokens, total_tokens, wall_time),
+                **cache_throughput_metrics(
+                    total_cached_input_tokens,
+                    total_cache_creation_input_tokens,
+                    total_cache_inclusive_tokens,
+                    total_input_tokens,
+                    wall_time,
+                ),
                 **percentile_metrics(latencies, "latency_sec"),
                 **percentile_metrics(ttfts, "ttft_sec"),
                 "ttft_samples": len(ttfts),
@@ -101,6 +133,9 @@ class MetricsAccumulator:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_tokens = 0
+        self.total_cached_input_tokens = 0
+        self.total_cache_creation_input_tokens = 0
+        self.total_cache_inclusive_tokens = 0
         self.latencies: list[float] = []
         self.ttfts: list[float] = []
         self.decode_times: list[float] = []
@@ -117,6 +152,9 @@ class MetricsAccumulator:
             self.total_input_tokens += result.input_tokens
             self.total_output_tokens += result.output_tokens
             self.total_tokens += result.total_tokens
+            self.total_cached_input_tokens += result.cached_input_tokens
+            self.total_cache_creation_input_tokens += result.cache_creation_input_tokens
+            self.total_cache_inclusive_tokens += result.cache_inclusive_total_tokens or result.total_tokens
             self.latencies.append(result.latency_sec)
             if result.ttft_sec is not None:
                 self.ttfts.append(result.ttft_sec)
@@ -172,6 +210,13 @@ class MetricsAccumulator:
                 "attempt_rpm": round(attempt_rpm, 4) if wall_time > 0 else 0.0,
                 "attempt_tpm": round(attempt_tpm, 2) if wall_time > 0 else 0.0,
                 **throughput_metrics(self.total_input_tokens, self.total_output_tokens, self.total_tokens, wall_time),
+                **cache_throughput_metrics(
+                    self.total_cached_input_tokens,
+                    self.total_cache_creation_input_tokens,
+                    self.total_cache_inclusive_tokens,
+                    self.total_input_tokens,
+                    wall_time,
+                ),
                 **percentile_metrics(self.latencies, "latency_sec"),
                 **percentile_metrics(self.ttfts, "ttft_sec"),
                 "ttft_samples": len(self.ttfts),
