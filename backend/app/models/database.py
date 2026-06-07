@@ -17,6 +17,8 @@ class TestTask(Base):
     __tablename__ = "test_tasks"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_username: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    owner_role: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     api_protocol: Mapped[str] = mapped_column(String, nullable=False, default="openai", index=True)
     base_url: Mapped[str] = mapped_column(String, nullable=False)
@@ -95,6 +97,12 @@ def _ensure_compat_columns() -> None:
             if "api_protocol" not in task_columns:
                 conn.execute(text("ALTER TABLE test_tasks ADD COLUMN api_protocol VARCHAR NOT NULL DEFAULT 'openai'"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_api_protocol ON test_tasks (api_protocol)"))
+            if "owner_username" not in task_columns:
+                conn.execute(text("ALTER TABLE test_tasks ADD COLUMN owner_username VARCHAR DEFAULT 'root'"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_owner_username ON test_tasks (owner_username)"))
+            if "owner_role" not in task_columns:
+                conn.execute(text("ALTER TABLE test_tasks ADD COLUMN owner_role VARCHAR DEFAULT 'root'"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_owner_role ON test_tasks (owner_role)"))
 
             result_columns = {
                 row[0]
@@ -115,6 +123,12 @@ def _ensure_compat_columns() -> None:
         if "api_protocol" not in columns:
             conn.execute(text("ALTER TABLE test_tasks ADD COLUMN api_protocol VARCHAR NOT NULL DEFAULT 'openai'"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_api_protocol ON test_tasks (api_protocol)"))
+        if "owner_username" not in columns:
+            conn.execute(text("ALTER TABLE test_tasks ADD COLUMN owner_username VARCHAR DEFAULT 'root'"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_owner_username ON test_tasks (owner_username)"))
+        if "owner_role" not in columns:
+            conn.execute(text("ALTER TABLE test_tasks ADD COLUMN owner_role VARCHAR DEFAULT 'root'"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_test_tasks_owner_role ON test_tasks (owner_role)"))
         result_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(test_results)")).fetchall()]
         if "charts_path" not in result_columns:
             conn.execute(text("ALTER TABLE test_results ADD COLUMN charts_path VARCHAR"))

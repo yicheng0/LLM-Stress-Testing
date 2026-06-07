@@ -8,10 +8,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from backend.app.config import settings
+from backend.app.core.auth import AuthUser, can_access_task, current_user, parse_token, require_root
 from backend.app.core.progress import ProgressHub
 from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
@@ -21,6 +22,7 @@ from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, CustomCaseBa
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
+BUILT_IN_BASE_URLS = {"https://api.wenwen-ai.com", "https://api.apipro.ai"}
 
 
 def get_repository() -> Repository:
@@ -379,6 +381,8 @@ def _task_out(
     config = _config(task)
     return TestTaskOut(
         id=task.id,
+        owner_username=task.owner_username,
+        owner_role=task.owner_role,
         name=task.name,
         api_protocol=task.api_protocol or config.get("api_protocol", "openai"),
         base_url=task.base_url,
@@ -418,14 +422,45 @@ def _expires_at(task: TestTask) -> datetime | None:
     return task.completed_at + timedelta(hours=settings.result_retention_hours)
 
 
+def _ensure_task_access(task: TestTask, user: AuthUser) -> None:
+    if not can_access_task(user, task.owner_username):
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+
+def _ensure_base_url_allowed(base_url: str, user: AuthUser) -> None:
+    normalized = str(base_url or "").rstrip("/")
+    is_built_in = normalized in BUILT_IN_BASE_URLS
+    if user.role == "root" and not is_built_in:
+        raise HTTPException(status_code=403, detail="root 模式只能使用国内或海外节点")
+    if user.role == "guest" and is_built_in:
+        raise HTTPException(status_code=403, detail="游客模式只能使用第三方自定义域名")
+
+
+def _download_user(
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> AuthUser:
+    if authorization and authorization.lower().startswith("bearer "):
+        user = parse_token(authorization.split(" ", 1)[1].strip())
+    else:
+        user = parse_token(token or "")
+    if not user:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return user
+
+
 @router.post("", response_model=StartTestOut)
 async def start_test(
     payload: TestCreate,
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
     manager: TaskManager = Depends(get_task_manager),
 ) -> StartTestOut:
+    if user.role == "guest" and payload.prompt_source == "custom":
+        raise HTTPException(status_code=403, detail="游客不能使用自定义 Case")
+    _ensure_base_url_allowed(payload.base_url, user)
     try:
-        task_id = await manager.start_test(payload)
+        task_id = await manager.start_test(payload, user)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -442,6 +477,7 @@ async def start_test(
 @router.post("/custom-case-batch", response_model=CustomCaseBatchOut)
 async def start_custom_case_batch(
     payload: CustomCaseBatchRequest,
+    user: AuthUser = Depends(require_root),
     manager: TaskManager = Depends(get_task_manager),
 ) -> CustomCaseBatchOut:
     batch_id = str(uuid4())
@@ -467,6 +503,7 @@ async def start_custom_case_batch(
         prompt = case.prompt.strip()
         for channel_index, channel in enumerate(payload.channels, start=1):
             try:
+                _ensure_base_url_allowed(channel.base_url, user)
                 item = TestCreate(
                     **common,
                     name=f"{payload.batch_name} / {case.name} / {channel.name}",
@@ -498,7 +535,7 @@ async def start_custom_case_batch(
                     batch_channel_index=channel_index,
                     batch_total_tests=total,
                 )
-                test_ids.append(await manager.start_test(item))
+                test_ids.append(await manager.start_test(item, user))
             except ValueError as exc:
                 failures.append(CustomCaseBatchFailure(case_name=case.name, channel_name=channel.name, message=str(exc)))
             except Exception as exc:
@@ -526,6 +563,7 @@ async def list_tests(
     api_protocol: str | None = Query(default=None, pattern="^(openai|anthropic|gemini)$"),
     created_from: datetime | None = None,
     created_to: datetime | None = None,
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
     manager: TaskManager = Depends(get_task_manager),
@@ -534,6 +572,7 @@ async def list_tests(
     total, rows = repository.list_tasks(
         page,
         page_size,
+        user,
         status=status,
         model=model,
         api_protocol=api_protocol,
@@ -550,12 +589,13 @@ async def list_tests(
 
 @router.get("/dashboard/realtime")
 async def realtime_dashboard(
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
     manager: TaskManager = Depends(get_task_manager),
 ) -> dict[str, Any]:
     manager.reconcile_active_tasks()
-    snapshot = repository.dashboard_snapshot(recent_limit=8)
+    snapshot = repository.dashboard_snapshot(user, recent_limit=8)
     total = snapshot["total"]
     status_counts: dict[str, int] = snapshot["status_counts"]
     protocol_counts = {"openai": 0, "anthropic": 0, "gemini": 0}
@@ -655,6 +695,7 @@ async def realtime_dashboard(
 @router.post("/bulk-delete", response_model=BulkDeleteOut)
 async def bulk_delete_tests(
     payload: BulkDeleteIn,
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
 ) -> BulkDeleteOut:
     ids = list(dict.fromkeys(task_id.strip() for task_id in payload.ids if task_id and task_id.strip()))
@@ -664,7 +705,7 @@ async def bulk_delete_tests(
     deleted = 0
     not_found: list[str] = []
     for task_id in ids:
-        if repository.delete_task(task_id):
+        if repository.delete_task(task_id, user):
             deleted += 1
         else:
             not_found.append(task_id)
@@ -675,6 +716,7 @@ async def bulk_delete_tests(
 @router.get("/{task_id}", response_model=TestTaskOut)
 async def get_test(
     task_id: str,
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
     progress_hub: ProgressHub = Depends(get_progress_hub),
     manager: TaskManager = Depends(get_task_manager),
@@ -684,11 +726,21 @@ async def get_test(
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
     task, result = item
+    _ensure_task_access(task, user)
     return _task_out(task, result, progress_hub.snapshot(task_id))
 
 
 @router.post("/{task_id}/stop")
-async def stop_test(task_id: str, manager: TaskManager = Depends(get_task_manager)) -> dict[str, Any]:
+async def stop_test(
+    task_id: str,
+    user: AuthUser = Depends(current_user),
+    repository: Repository = Depends(get_repository),
+    manager: TaskManager = Depends(get_task_manager),
+) -> dict[str, Any]:
+    item = repository.get_task(task_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="任务不存在或不在运行中")
+    _ensure_task_access(item[0], user)
     stopped = await manager.stop_test(task_id)
     if not stopped:
         raise HTTPException(status_code=404, detail="任务不存在或不在运行中")
@@ -699,6 +751,7 @@ async def stop_test(task_id: str, manager: TaskManager = Depends(get_task_manage
 async def resume_matrix_test(
     task_id: str,
     payload: MatrixResumeRequest,
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
     manager: TaskManager = Depends(get_task_manager),
 ) -> StartTestOut:
@@ -706,8 +759,10 @@ async def resume_matrix_test(
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
     task, result = item
+    _ensure_task_access(task, user)
     if not task.matrix_mode:
         raise HTTPException(status_code=400, detail="非矩阵任务不能续跑")
+    _ensure_base_url_allowed(task.base_url, user)
     if task.status not in {"completed", "failed", "cancelled", "interrupted"}:
         raise HTTPException(status_code=400, detail="当前任务状态不能续跑")
     existing_matrix_results = _matrix_results_for_resume(result)
@@ -720,6 +775,7 @@ async def resume_matrix_test(
             _config(task),
             payload.api_key,
             existing_matrix_results,
+            user,
             resume_policy=payload.resume_policy,
         )
     except ValueError as exc:
@@ -737,19 +793,28 @@ async def resume_matrix_test(
 
 
 @router.delete("/{task_id}")
-async def delete_test(task_id: str, repository: Repository = Depends(get_repository)) -> dict[str, Any]:
-    deleted = repository.delete_task(task_id)
+async def delete_test(
+    task_id: str,
+    user: AuthUser = Depends(current_user),
+    repository: Repository = Depends(get_repository),
+) -> dict[str, Any]:
+    deleted = repository.delete_task(task_id, user)
     if not deleted:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"deleted": True}
 
 
 @router.get("/{task_id}/report", response_model=ReportOut)
-async def get_report(task_id: str, repository: Repository = Depends(get_repository)) -> ReportOut:
+async def get_report(
+    task_id: str,
+    user: AuthUser = Depends(current_user),
+    repository: Repository = Depends(get_repository),
+) -> ReportOut:
     item = repository.get_task(task_id)
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
     task, result = item
+    _ensure_task_access(task, user)
     config = json.loads(task.config_json)
     summary = _summary(result)
     charts = build_chart_data(
@@ -784,12 +849,14 @@ async def get_details(
     task_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=500),
+    user: AuthUser = Depends(current_user),
     repository: Repository = Depends(get_repository),
 ) -> DetailsOut:
     item = repository.get_task(task_id)
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
-    _, result = item
+    task, result = item
+    _ensure_task_access(task, user)
     total, items = load_details(
         result.details_jsonl_path if result else None,
         page=page,
@@ -825,6 +892,7 @@ def _safe_download_file(path: str | None) -> Path | None:
 async def download_report(
     task_id: str,
     kind: str,
+    user: AuthUser = Depends(_download_user),
     repository: Repository = Depends(get_repository),
 ) -> FileResponse:
     if kind not in {"summary", "details", "markdown", "html", "matrix_csv"}:
@@ -832,7 +900,8 @@ async def download_report(
     item = repository.get_task(task_id)
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
-    _, result = item
+    task, result = item
+    _ensure_task_access(task, user)
     path = _safe_download_file(_download_path(result, kind))
     if not path:
         raise HTTPException(status_code=404, detail="报告文件不存在")

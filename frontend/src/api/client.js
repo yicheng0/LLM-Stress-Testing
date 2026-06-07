@@ -1,15 +1,34 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+const TOKEN_KEY = 'llm_stress_auth_token'
+
+export function getAuthToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+export function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token)
+  } else {
+    localStorage.removeItem(TOKEN_KEY)
+  }
+}
 
 async function request(path, options = {}) {
+  const token = getAuthToken()
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {})
     },
     ...options
   })
 
   if (!response.ok) {
+    if (response.status === 401) {
+      setAuthToken('')
+      window.dispatchEvent(new CustomEvent('auth-expired'))
+    }
     let message = `请求失败：${response.status}`
     try {
       const body = await response.json()
@@ -24,6 +43,17 @@ async function request(path, options = {}) {
     return null
   }
   return response.json()
+}
+
+export function login(payload) {
+  return request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+export function getMe() {
+  return request('/api/auth/me')
 }
 
 export function createTest(payload) {
@@ -104,7 +134,9 @@ export function getDetails(id, params = {}) {
 }
 
 export function downloadUrl(id, kind) {
-  return `${API_BASE}/api/tests/${id}/download/${kind}`
+  const token = encodeURIComponent(getAuthToken())
+  const suffix = token ? `?token=${token}` : ''
+  return `${API_BASE}/api/tests/${id}/download/${kind}${suffix}`
 }
 
 export function createProgressSocket(id) {
@@ -112,5 +144,6 @@ export function createProgressSocket(id) {
     return new WebSocket(`${import.meta.env.VITE_WS_BASE_URL}/ws/tests/${id}`)
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return new WebSocket(`${protocol}//${window.location.host}/ws/tests/${id}`)
+  const token = encodeURIComponent(getAuthToken())
+  return new WebSocket(`${protocol}//${window.location.host}/ws/tests/${id}?token=${token}`)
 }

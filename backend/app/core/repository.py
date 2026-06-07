@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
+from backend.app.core.auth import AuthUser
 from backend.app.core.task_status import ACTIVE_TASK_STATUSES, TaskStatus, normalize_task_status
 from backend.app.models.database import SessionLocal, TestEvent, TestResult, TestTask
 from backend.app.models.schemas import TestCreate
@@ -71,11 +72,13 @@ class Repository:
     def session(self) -> Session:
         return SessionLocal()
 
-    def create_task(self, task_id: str, payload: TestCreate) -> TestTask:
+    def create_task(self, task_id: str, payload: TestCreate, owner: AuthUser) -> TestTask:
         data = _with_prompt_metadata(_redact_sensitive(_model_dump(payload)))
         now = datetime.utcnow()
         task = TestTask(
             id=task_id,
+            owner_username=owner.username,
+            owner_role=owner.role,
             name=payload.name,
             api_protocol=payload.api_protocol,
             base_url=payload.base_url,
@@ -113,6 +116,7 @@ class Repository:
         self,
         page: int,
         page_size: int,
+        owner: AuthUser,
         status: str | None = None,
         model: str | None = None,
         api_protocol: str | None = None,
@@ -133,6 +137,8 @@ class Repository:
                 filters.append(TestTask.created_at >= created_from)
             if created_to:
                 filters.append(TestTask.created_at <= created_to)
+            if owner.role != "root":
+                filters.append(TestTask.owner_username == owner.username)
 
             base_stmt = (
                 select(TestTask, TestResult)
@@ -155,14 +161,18 @@ class Repository:
                 items.append((task, result))
             return total, items
 
-    def dashboard_snapshot(self, recent_limit: int = 8) -> dict[str, Any]:
+    def dashboard_snapshot(self, owner: AuthUser, recent_limit: int = 8) -> dict[str, Any]:
         recent_limit = min(max(1, recent_limit), 50)
         with self.session() as db:
-            total = int(db.execute(select(func.count()).select_from(TestTask)).scalar_one())
+            filters = []
+            if owner.role != "root":
+                filters.append(TestTask.owner_username == owner.username)
+            total = int(db.execute(select(func.count()).select_from(TestTask).where(*filters)).scalar_one())
             status_counts = {
                 status: int(count)
                 for status, count in db.execute(
                     select(TestTask.status, func.count())
+                    .where(*filters)
                     .group_by(TestTask.status)
                 ).all()
             }
@@ -170,6 +180,7 @@ class Repository:
                 protocol: int(count)
                 for protocol, count in db.execute(
                     select(TestTask.api_protocol, func.count())
+                    .where(*filters)
                     .group_by(TestTask.api_protocol)
                 ).all()
             }
@@ -177,6 +188,7 @@ class Repository:
                 model: int(count)
                 for model, count in db.execute(
                     select(TestTask.model, func.count())
+                    .where(*filters)
                     .group_by(TestTask.model)
                     .order_by(func.count().desc())
                     .limit(8)
@@ -186,19 +198,22 @@ class Repository:
             recent_rows = db.execute(
                 select(TestTask, TestResult)
                 .outerjoin(TestResult, TestTask.id == TestResult.task_id)
+                .where(*filters)
                 .order_by(TestTask.created_at.desc())
                 .limit(recent_limit)
             ).all()
             active_rows = db.execute(
                 select(TestTask, TestResult)
                 .outerjoin(TestResult, TestTask.id == TestResult.task_id)
-                .where(TestTask.status.in_(ACTIVE_TASK_STATUSES))
+                .where(TestTask.status.in_(ACTIVE_TASK_STATUSES), *filters)
             ).all()
 
             error_counts: dict[str, int] = {}
             error_rows = db.execute(
                 select(TestResult.error_message, func.count())
+                .join(TestTask, TestTask.id == TestResult.task_id)
                 .where(TestResult.error_message.is_not(None))
+                .where(*filters)
                 .group_by(TestResult.error_message)
                 .order_by(func.count().desc())
                 .limit(20)
@@ -330,12 +345,14 @@ class Repository:
                 task.completed_at = datetime.utcnow()
             db.commit()
 
-    def delete_task(self, task_id: str) -> bool:
+    def delete_task(self, task_id: str, owner: AuthUser | None = None) -> bool:
         task_results_dir = (settings.results_dir / task_id).resolve()
         results_root = settings.results_dir.resolve()
         with self.session() as db:
             task = db.get(TestTask, task_id)
             if not task:
+                return False
+            if owner and owner.role != "root" and task.owner_username != owner.username:
                 return False
             for event in db.execute(select(TestEvent).where(TestEvent.task_id == task_id)).scalars():
                 db.delete(event)

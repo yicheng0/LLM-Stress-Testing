@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.app.core.auth import AuthUser, current_user
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi
 from backend.app.models.schemas import CurlConvertOut, CurlConvertRequest
 
@@ -9,7 +10,7 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 
 
 @router.post("/convert-curl", response_model=CurlConvertOut)
-async def convert_curl(payload: CurlConvertRequest) -> CurlConvertOut:
+async def convert_curl(payload: CurlConvertRequest, _user: AuthUser = Depends(current_user)) -> CurlConvertOut:
     try:
         converted = convert_curl_to_openapi(
             curl=payload.curl,

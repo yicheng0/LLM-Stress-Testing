@@ -47,10 +47,11 @@
                 <el-input v-model="form.model" />
               </el-form-item>
               <el-form-item label="接入域名" prop="base_url">
-                <el-select v-model="form.base_url" class="full-select" filterable allow-create>
+                <el-select v-if="isRootUser" v-model="form.base_url" class="full-select">
                   <el-option label="国内节点" value="https://api.wenwen-ai.com" />
                   <el-option label="海外节点" value="https://api.apipro.ai" />
                 </el-select>
+                <el-input v-else v-model="form.base_url" placeholder="https://api.example.com" />
               </el-form-item>
               <el-form-item label="Endpoint" prop="endpoint">
                 <el-input v-model="form.endpoint" />
@@ -275,10 +276,11 @@
                   <div class="channel-group-title">接入信息</div>
                   <div class="grid-2 compact-grid">
                     <el-form-item label="接入域名">
-                      <el-select v-model="channel.base_url" class="full-select" filterable allow-create>
+                      <el-select v-if="isRootUser" v-model="channel.base_url" class="full-select">
                         <el-option label="国内节点" value="https://api.wenwen-ai.com" />
                         <el-option label="海外节点" value="https://api.apipro.ai" />
                       </el-select>
+                      <el-input v-else v-model="channel.base_url" placeholder="https://api.example.com" />
                     </el-form-item>
                     <el-form-item label="Endpoint">
                       <el-input v-model="channel.endpoint" />
@@ -381,8 +383,10 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
 import { createCustomCaseBatch, createTest } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 const formRef = ref()
 const submitting = ref(false)
 const batchSubmitting = ref(false)
@@ -433,6 +437,10 @@ const conservativeDefaults = {
 }
 
 const form = reactive({ ...conservativeDefaults, ...readInitialConfig() })
+const isRootUser = computed(() => auth.role === 'root')
+if (!isRootUser.value && ['https://api.wenwen-ai.com', 'https://api.apipro.ai'].includes(form.base_url)) {
+  form.base_url = ''
+}
 const batchForm = reactive({
   batch_name: '批量自定义 Case 渠道诊断',
   concurrency: 1,
@@ -452,15 +460,17 @@ const batchCases = ref([
   newBatchCase('短问答', '请用一句话总结这段文本的核心含义。'),
   newBatchCase('长上下文', '请分析以下业务输入的关键信息，并给出结构化结论。')
 ])
-const batchChannels = ref([
-  newChannel('国内节点', 'https://api.wenwen-ai.com'),
-  newChannel('海外节点', 'https://api.apipro.ai')
-])
+const batchChannels = ref(isRootUser.value
+  ? [
+      newChannel('国内节点', 'https://api.wenwen-ai.com'),
+      newChannel('海外节点', 'https://api.apipro.ai')
+    ]
+  : [newChannel('第三方渠道', '')])
 
 const rules = {
   name: [{ required: true, message: '请输入测试名称', trigger: 'blur' }],
   api_protocol: [{ required: true, message: '请选择接口协议', trigger: 'change' }],
-  base_url: [{ required: true, message: '请输入接入域名', trigger: 'change' }],
+  base_url: [{ required: true, validator: validateBaseUrl, trigger: ['change', 'blur'] }],
   api_key: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
   model: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   endpoint: [{ required: true, message: '请输入 Endpoint', trigger: 'blur' }],
@@ -518,6 +528,29 @@ function newChannel(name, baseUrl = 'https://api.wenwen-ai.com') {
     model: protocolDefaults.openai.model,
     api_key: ''
   }
+}
+
+function validateBaseUrl(_rule, value, callback) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    callback(new Error('请输入接入域名'))
+    return
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    callback(new Error('接入域名必须以 http:// 或 https:// 开头'))
+    return
+  }
+  try {
+    const url = new URL(trimmed)
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
+      callback(new Error('接入域名必须以 http:// 或 https:// 开头'))
+      return
+    }
+  } catch {
+    callback(new Error('接入域名必须是合法 URL，例如 https://api.example.com'))
+    return
+  }
+  callback()
 }
 
 function newBatchCase(name = '', prompt = '') {
@@ -593,6 +626,7 @@ async function submit() {
   }
   submitting.value = true
   try {
+    form.base_url = String(form.base_url || '').trim()
     const payload = {
       ...form,
       prompt_source: 'custom',
@@ -644,6 +678,11 @@ async function submitBatch() {
     ElMessage.error('请补齐所有渠道的名称、域名、Endpoint、模型和 API Key')
     return
   }
+  const invalidUrl = channels.find((channel) => !isValidBaseUrl(channel.base_url))
+  if (invalidUrl) {
+    ElMessage.error('渠道域名必须是合法 URL，并以 http:// 或 https:// 开头')
+    return
+  }
   if (cases.length * channels.length > 12) {
     ElMessage.error('批量诊断组合数不能超过 12 个')
     return
@@ -666,6 +705,17 @@ async function submitBatch() {
     ElMessage.error(error.message)
   } finally {
     batchSubmitting.value = false
+  }
+}
+
+function isValidBaseUrl(value) {
+  const trimmed = String(value || '').trim()
+  if (!/^https?:\/\//i.test(trimmed)) return false
+  try {
+    const url = new URL(trimmed)
+    return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname)
+  } catch {
+    return false
   }
 }
 

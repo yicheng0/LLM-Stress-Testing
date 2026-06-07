@@ -7,6 +7,22 @@ from pydantic import BaseModel, Field, model_validator
 
 
 TaskStatus = Literal["queued", "running", "stopping", "completed", "failed", "cancelled", "interrupted"]
+UserRole = Literal["root", "guest"]
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(default="guest", min_length=1)
+    password: str = ""
+
+
+class UserOut(BaseModel):
+    username: str
+    role: UserRole
+
+
+class LoginOut(BaseModel):
+    token: str
+    user: UserOut
 
 
 class TestCreate(BaseModel):
@@ -59,6 +75,8 @@ class TestCreate(BaseModel):
 
 class TestTaskOut(BaseModel):
     id: str
+    owner_username: str | None = None
+    owner_role: str | None = None
     name: str
     api_protocol: str = "openai"
     base_url: str

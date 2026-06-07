@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.api.auth import router as auth_router
 from backend.app.api.docs import router as docs_router
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
@@ -35,6 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(tests_router)
 app.include_router(docs_router)
 app.include_router(websocket_router)

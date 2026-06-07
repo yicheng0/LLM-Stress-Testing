@@ -63,23 +63,23 @@
         </el-form-item>
         <el-form-item label="接入域名" prop="base_url" class="full-row">
           <div class="domain-picker">
-            <div class="domain-mode-grid" role="radiogroup" aria-label="接入域名">
+            <div v-if="isRootUser" class="domain-mode-grid" role="radiogroup" aria-label="接入域名">
               <button
-                v-for="option in domainModeOptions"
-                :key="option.key"
+                v-for="option in domainOptions"
+                :key="option.value"
                 type="button"
                 class="domain-mode-card"
-                :class="{ active: domainMode === option.key }"
-                :aria-checked="domainMode === option.key"
+                :class="{ active: domainMode === option.value }"
+                :aria-checked="domainMode === option.value"
                 role="radio"
-                @click="selectDomainMode(option.key)"
+                @click="selectDomainMode(option.value)"
               >
                 <span>{{ option.label }}</span>
-                <code>{{ option.displayUrl }}</code>
+                <code>{{ option.value }}</code>
               </button>
             </div>
             <el-input
-              v-if="domainMode === 'custom'"
+              v-else
               v-model="customBaseUrl"
               placeholder="请输入第三方域名，如 https://api.example.com"
               @input="syncCustomBaseUrl"
@@ -585,8 +585,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ChatLineRound, Check, Connection, Cpu, Document, RefreshLeft, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '../stores/auth'
 
 const emit = defineEmits(['submit', 'change'])
+const auth = useAuthStore()
 
 const props = defineProps({
   submitting: {
@@ -631,8 +633,15 @@ const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
 const builtInDomainValues = new Set(['https://api.wenwen-ai.com', 'https://api.apipro.ai'])
 const initialBaseUrl = String(form.base_url || '').trim()
 form.base_url = initialBaseUrl || defaults.base_url
-const domainMode = ref(builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : 'custom')
-const customBaseUrl = ref(builtInDomainValues.has(initialBaseUrl) ? '' : initialBaseUrl)
+const storedCustomBaseUrl = localStorage.getItem('llm_stress_custom_base_url') || ''
+const domainMode = ref(builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : defaults.base_url)
+const customBaseUrl = ref(!builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : storedCustomBaseUrl)
+const isRootUser = computed(() => auth.role === 'root')
+if (isRootUser.value) {
+  form.base_url = domainMode.value
+} else {
+  form.base_url = customBaseUrl.value
+}
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
 const assumedLatencySec = ref(10)
@@ -820,18 +829,6 @@ const domainOptions = [
   {
     label: '海外节点',
     value: 'https://api.apipro.ai'
-  }
-]
-const domainModeOptions = [
-  ...domainOptions.map((item) => ({
-    key: item.value,
-    label: item.label,
-    displayUrl: item.value
-  })),
-  {
-    key: 'custom',
-    label: '自定义域名',
-    displayUrl: 'https://api.example.com'
   }
 ]
 const protocolDefaults = {
@@ -1288,28 +1285,34 @@ function targetPresetMainText(preset) {
 
 function selectDomainMode(mode) {
   domainMode.value = mode
-  if (mode === 'custom') {
-    form.base_url = customBaseUrl.value
-    formRef.value?.validateField('base_url').catch(() => {})
-    return
-  }
   form.base_url = mode
   formRef.value?.clearValidate('base_url')
 }
 
 function syncCustomBaseUrl(value) {
   customBaseUrl.value = value
-  if (domainMode.value === 'custom') {
+  localStorage.setItem('llm_stress_custom_base_url', value)
+  if (!isRootUser.value) {
     form.base_url = value
   }
 }
 
 function trimCustomBaseUrl() {
   customBaseUrl.value = String(customBaseUrl.value || '').trim()
-  if (domainMode.value === 'custom') {
+  localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
+  if (!isRootUser.value) {
     form.base_url = customBaseUrl.value
   }
 }
+
+watch(
+  isRootUser,
+  (isRoot) => {
+    form.base_url = isRoot ? domainMode.value : customBaseUrl.value
+    formRef.value?.clearValidate('base_url')
+  },
+  { immediate: true }
+)
 
 watch(
   () => form.api_protocol,
@@ -1319,7 +1322,7 @@ watch(
     const previousDefaults = protocolDefaults[previous] || protocolDefaults[lastProtocol.value]
 
     if (!String(form.base_url || '').trim()) {
-      selectDomainMode(defaults.base_url)
+      form.base_url = isRootUser.value ? defaults.base_url : customBaseUrl.value
     }
     if (!form.endpoint || isKnownEndpoint(form.endpoint)) {
       form.endpoint = endpointFor(protocol)
@@ -1465,8 +1468,9 @@ function applyTargetEstimate() {
 
 async function submit() {
   form.base_url = String(form.base_url || '').trim()
-  if (domainMode.value === 'custom') {
+  if (!isRootUser.value) {
     customBaseUrl.value = form.base_url
+    localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
   }
   await formRef.value.validate()
   emit('submit', { ...form, expected_metrics: expectedMetrics.value })
@@ -1474,8 +1478,11 @@ async function submit() {
 
 function reset() {
   Object.assign(form, defaults)
-  selectDomainMode(defaults.base_url)
-  customBaseUrl.value = ''
+  if (isRootUser.value) {
+    selectDomainMode(defaults.base_url)
+  } else {
+    form.base_url = customBaseUrl.value
+  }
   tokenPreset.value = '1000'
   usageMode.value = 'beginner'
   Object.assign(targetEstimate, {
@@ -1668,14 +1675,17 @@ function reset() {
 
 .domain-picker {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
 }
 
 .domain-mode-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.domain-mode-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .domain-mode-card {

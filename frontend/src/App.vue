@@ -1,5 +1,5 @@
 <template>
-  <router-view v-if="isPrintLayout" />
+  <router-view v-if="isStandaloneLayout" />
   <el-container v-else class="app-shell">
     <el-aside class="sidebar desktop-sidebar" width="236px">
       <div class="brand">
@@ -10,15 +10,15 @@
         </div>
       </div>
 
-      <el-menu :default-active="activePath" router class="nav-menu">
-        <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index">
+        <el-menu :default-active="activePath" router class="nav-menu">
+          <el-menu-item v-for="item in visibleNavItems" :key="item.index" :index="item.index">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
 
       <div class="sidebar-info">
-        <div class="info-block domain-block">
+        <div v-if="auth.role === 'root'" class="info-block domain-block">
           <div class="info-title">接入域名</div>
           <div class="domain-line">
             <span>国内</span>
@@ -30,13 +30,6 @@
           </div>
         </div>
 
-        <div class="info-block qr-block">
-          <div class="qr-copy">
-            <div class="info-title">扫码联系</div>
-            <div class="qr-caption">APIPro 技术支持</div>
-          </div>
-          <img class="sidebar-qr" src="/assets/apipro-qrcode.png" alt="APIPro 技术支持二维码" />
-        </div>
       </div>
     </el-aside>
 
@@ -55,7 +48,9 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <el-tag v-if="auth.user" effect="plain">{{ auth.user.username }} · {{ auth.user.role }}</el-tag>
           <el-button :icon="Refresh" @click="reloadRoute">刷新</el-button>
+          <el-button @click="logout">退出</el-button>
         </div>
       </el-header>
 
@@ -87,34 +82,29 @@
         </div>
 
         <el-menu :default-active="activePath" router class="nav-menu" @select="mobileNavOpen = false">
-          <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index">
+          <el-menu-item v-for="item in visibleNavItems" :key="item.index" :index="item.index">
             <el-icon><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
           </el-menu-item>
         </el-menu>
 
-        <div class="sidebar-info">
-          <div class="info-block qr-block">
-            <div class="qr-copy">
-              <div class="info-title">扫码联系</div>
-              <div class="qr-caption">APIPro 技术支持</div>
-            </div>
-            <img class="sidebar-qr" src="/assets/apipro-qrcode.png" alt="APIPro 技术支持二维码" />
-          </div>
-        </div>
+        <div class="sidebar-info" />
       </div>
     </el-drawer>
   </el-container>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Clock, DataAnalysis, Document, DocumentAdd, EditPen, Menu, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { useAuthStore } from './stores/auth'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const isPrintLayout = computed(() => Boolean(route.meta?.printLayout))
+const isStandaloneLayout = computed(() => Boolean(route.meta?.printLayout || route.meta?.public))
 const mobileNavOpen = ref(false)
 const navItems = [
   { index: '/tests/new', label: '新建测试', icon: Plus },
@@ -125,6 +115,10 @@ const navItems = [
   { index: '/dashboard/realtime', label: '实时面板', icon: DataAnalysis },
   { index: '/docs/curl-to-openapi', label: '文档生成', icon: DocumentAdd }
 ]
+const visibleNavItems = computed(() => {
+  if (auth.role !== 'guest') return navItems
+  return navItems.filter((item) => item.index !== '/tests/custom-case')
+})
 
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'
@@ -160,6 +154,19 @@ const today = new Intl.DateTimeFormat('zh-CN', {
 function reloadRoute() {
   router.go(0)
 }
+
+function logout() {
+  auth.logout()
+  router.replace('/login')
+}
+
+function handleAuthExpired() {
+  auth.logout()
+  router.replace('/login')
+}
+
+onMounted(() => window.addEventListener('auth-expired', handleAuthExpired))
+onUnmounted(() => window.removeEventListener('auth-expired', handleAuthExpired))
 
 watch(
   () => route.fullPath,

@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.app.config import settings
+from backend.app.core.auth import AuthUser
 from backend.app.core.progress import ProgressHub
 from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
@@ -58,8 +59,8 @@ class TaskManager:
             self.tasks.pop(task_id, None)
             self.stop_events.pop(task_id, None)
 
-    async def start_test(self, payload: TestCreate) -> str:
-        return await self._start_test(payload)
+    async def start_test(self, payload: TestCreate, owner: AuthUser) -> str:
+        return await self._start_test(payload, owner=owner)
 
     async def resume_matrix_test(
         self,
@@ -67,6 +68,7 @@ class TaskManager:
         source_config: dict[str, Any],
         api_key: str,
         existing_matrix_results: list[dict[str, Any]],
+        owner: AuthUser,
         *,
         resume_policy: str = "missing_or_failed",
     ) -> str:
@@ -83,6 +85,7 @@ class TaskManager:
         payload = TestCreate(**config)
         return await self._start_test(
             payload,
+            owner=owner,
             existing_matrix_results=existing_matrix_results,
             resume_policy=resume_policy,
         )
@@ -91,6 +94,7 @@ class TaskManager:
         self,
         payload: TestCreate,
         *,
+        owner: AuthUser,
         existing_matrix_results: list[dict[str, Any]] | None = None,
         resume_policy: str = "missing_or_failed",
     ) -> str:
@@ -115,7 +119,7 @@ class TaskManager:
             raise ValueError(preflight.message or "API Key 无效或无权限，无法启动测试")
 
         task_id = str(uuid4())
-        self.repository.create_task(task_id, payload)
+        self.repository.create_task(task_id, payload, owner)
         self.repository.add_event(task_id, "info", "任务已创建")
         self.repository.add_event(task_id, "info", preflight.message)
 

@@ -1,0 +1,9 @@
+{
+  "users": [
+    {
+      "username": "vendor-demo",
+      "role": "guest",
+      "password_hash": "pbkdf2_sha256$260000$replace-with-salt$replace-with-hash"
+    }
+  ]
+}
