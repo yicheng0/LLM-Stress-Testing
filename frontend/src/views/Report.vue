@@ -219,6 +219,9 @@
             <el-table-column prop="rpm" label="RPM" />
             <el-table-column prop="total_tps" label="TPS" />
             <el-table-column prop="total_tpm" label="TPM" />
+            <el-table-column label="含缓存 TPM">
+              <template #default="{ row }">{{ number(metricValue(row, 'cache_inclusive_tpm')) }}</template>
+            </el-table-column>
             <el-table-column label="成功率">
               <template #default="{ row }">{{ percent(row.success_rate) }}</template>
             </el-table-column>
@@ -423,6 +426,7 @@ const details = reactive({
 const matrixHeatmapMetric = ref('total_tpm')
 const matrixHeatmapMetrics = [
   { field: 'total_tpm', label: 'TPM', kind: 'throughput' },
+  { field: 'cache_inclusive_tpm', label: '含缓存 TPM', kind: 'throughput' },
   { field: 'rpm', label: 'RPM', kind: 'throughput' },
   { field: 'total_tps', label: 'TPS', kind: 'throughput' },
   { field: 'ttft_avg', label: 'TTFT Average', kind: 'latency' },
@@ -451,6 +455,8 @@ const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
 const expectedMetrics = computed(() => config.value.expected_metrics || summary.value?.config?.expected_metrics || null)
 const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
+const cacheInclusiveTpm = computed(() => metricWithFallback(results.value, 'cache_inclusive_tpm', 'total_tpm'))
+const cacheHitTpm = computed(() => Number(results.value.cache_hit_tpm || 0))
 const resultErrorCounts = computed(() => {
   if (!isMatrix.value) return results.value.error_counts || {}
   const merged = {}
@@ -565,7 +571,8 @@ const metricItems = computed(() => [
   { label: '总请求', value: number(results.value.total_requests), sub: `成功 ${number(results.value.successful_requests)}`, color: '#2563eb' },
   { label: '成功率', value: percent(results.value.success_rate), sub: `失败 ${number(results.value.failed_requests)}`, color: '#16a34a' },
   { label: 'RPM', value: number(results.value.rpm), sub: `QPS ${number(results.value.qps)}`, color: '#f97316' },
-  { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' }
+  { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' },
+  { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}`, color: '#7c3aed' }
 ])
 const securityAudit = computed(() => {
   const serialized = JSON.stringify({
@@ -644,6 +651,7 @@ const customerSummaryLines = computed(() => {
 
 const rpmAchievement = computed(() => achievementRatio(results.value.rpm, expectedMetrics.value?.expected_rpm))
 const tpmAchievement = computed(() => achievementRatio(results.value.total_tpm, expectedMetrics.value?.expected_tpm))
+const cacheInclusiveTpmAchievement = computed(() => achievementRatio(cacheInclusiveTpm.value, expectedMetrics.value?.expected_tpm))
 const tpsAchievement = computed(() => achievementRatio(results.value.total_tps, expectedMetrics.value?.expected_tps))
 const expectationStatus = computed(() => {
   const ratios = [rpmAchievement.value, tpmAchievement.value].filter((item) => item !== null)
@@ -665,6 +673,12 @@ const expectationCards = computed(() => [
     value: percentRatio(tpmAchievement.value),
     description: `预期 ${number(expectedMetrics.value?.expected_tpm)} / 实测 ${number(results.value.total_tpm)}`,
     type: expectationType(tpmAchievement.value)
+  },
+  {
+    label: '含缓存 TPM 达成率',
+    value: percentRatio(cacheInclusiveTpmAchievement.value),
+    description: `预期 ${number(expectedMetrics.value?.expected_tpm)} / 实测 ${number(cacheInclusiveTpm.value)}`,
+    type: expectationType(cacheInclusiveTpmAchievement.value)
   },
   {
     label: 'TPS 达成率',
@@ -781,13 +795,13 @@ const diagnosticCards = computed(() => {
 
 const matrixMetricItems = computed(() => {
   const bestTpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.total_tpm || 0)))
+  const bestCacheInclusiveTpm = Math.max(0, ...matrixPoints.value.map(item => metricWithFallback(item, 'cache_inclusive_tpm', 'total_tpm')))
   const bestRpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.rpm || 0)))
-  const minP95 = Math.min(...matrixPoints.value.map(item => Number(item.latency_p95 || Infinity)))
   return [
     { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token 目标 x 并发', color: '#2563eb' },
     { label: '最高 TPM', value: number(bestTpm), sub: '矩阵峰值', color: '#f97316' },
-    { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值', color: '#16a34a' },
-    { label: '最低 P95', value: minP95 === Infinity ? '-' : seconds(minP95), sub: '延迟最优点', color: '#334155' }
+    { label: '最高含缓存 TPM', value: number(bestCacheInclusiveTpm), sub: '矩阵峰值', color: '#7c3aed' },
+    { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值', color: '#16a34a' }
   ]
 })
 
@@ -913,6 +927,8 @@ const throughputRows = computed(() => [
   { name: 'Input TPM', value: number(results.value.input_tpm) },
   { name: 'Output TPM', value: number(results.value.output_tpm) },
   { name: 'Total TPM', value: number(results.value.total_tpm) },
+  { name: '含缓存 TPM', value: number(cacheInclusiveTpm.value) },
+  { name: '缓存命中 TPM', value: number(cacheHitTpm.value) },
   { name: 'Input TPS', value: number(results.value.input_tps) },
   { name: 'Output TPS', value: number(results.value.output_tps) },
   { name: 'Total TPS', value: number(results.value.total_tps) },
@@ -974,7 +990,7 @@ const matrixHeatmapOption = computed(() => {
   const concurrency = uniqueSorted(matrixPoints.value.map((item) => item.concurrency))
   const metric = selectedHeatmapMetric.value
   const values = matrixPoints.value
-    .map((item) => Number(item[metric.field]))
+    .map((item) => metricValue(item, metric.field))
     .filter((item) => Number.isFinite(item))
   const max = Math.max(1, ...values)
   const pointMap = new Map(matrixPoints.value.map((item) => [
@@ -985,7 +1001,7 @@ const matrixHeatmapOption = computed(() => {
   inputs.forEach((inputTokens, yIndex) => {
     concurrency.forEach((concurrencyValue, xIndex) => {
       const point = pointMap.get(`${inputTokens}:${concurrencyValue}`)
-      const value = point ? Number(point[metric.field]) : null
+      const value = point ? metricValue(point, metric.field) : null
       data.push([
         xIndex,
         yIndex,
@@ -1008,6 +1024,7 @@ const matrixHeatmapOption = computed(() => {
           `${number(point.input_tokens)} Token / ${number(point.concurrency)} 并发`,
           `${metric.label}: ${formatMetricValue(value, metric.field)}`,
           `TPM: ${number(point.total_tpm)}`,
+          `含缓存 TPM: ${number(metricValue(point, 'cache_inclusive_tpm'))}`,
           `RPM: ${number(point.rpm)}`,
           `TPS: ${number(point.total_tps)}`,
           `成功率: ${percent(point.success_rate)}`,
@@ -1143,7 +1160,7 @@ function matrixBarOption(field, label, color) {
       axisLabel: { rotate: 35 }
     },
     yAxis: { type: 'value' },
-    series: [{ name: label, type: 'bar', data: matrixPoints.value.map(item => item[field] || 0), itemStyle: { color } }]
+    series: [{ name: label, type: 'bar', data: matrixPoints.value.map(item => metricValue(item, field)), itemStyle: { color } }]
   }
 }
 
@@ -1159,6 +1176,18 @@ function formatMetricValue(value, field, compact = false) {
   if (field.startsWith('latency_') || field.startsWith('ttft_')) return seconds(value)
   if (compact) return compactNumber(value)
   return number(value)
+}
+
+function metricValue(item, field) {
+  if (field === 'cache_inclusive_tpm') return metricWithFallback(item, 'cache_inclusive_tpm', 'total_tpm')
+  return Number(item?.[field] || 0)
+}
+
+function metricWithFallback(item, field, fallbackField) {
+  const value = Number(item?.[field])
+  if (Number.isFinite(value) && value > 0) return value
+  const fallback = Number(item?.[fallbackField])
+  return Number.isFinite(fallback) ? fallback : 0
 }
 
 function achievementRatio(actual, expected) {
@@ -1443,8 +1472,12 @@ onMounted(loadReport)
 
 .expectation-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
+}
+
+:deep(.grid-4) {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
 
 .expectation-card {

@@ -32,7 +32,7 @@ from loadtest.metrics import percentile, percentile_metrics
 from loadtest.runner import LoadTestRunner, matrix_result_key, should_reuse_matrix_result
 from loadtest.models import RequestResult
 from loadtest.protocols import build_payload, extract_token_usage
-from loadtest.reports import render_html_report, render_markdown_report
+from loadtest.reports import generate_matrix_csv, render_html_report, render_markdown_report, render_matrix_report
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
 from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder, retry_attempt_tokens
@@ -237,6 +237,59 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertEqual(results_summary["cache_hit_tpm"], 360.0)
         self.assertEqual(results_summary["cache_inclusive_tpm"], 1620.0)
         self.assertEqual(results_summary["cache_hit_rate"], 0.3333)
+
+        markdown = render_markdown_report(summary)
+        html = render_html_report(summary, results)
+
+        self.assertIn("含缓存总计", markdown)
+        self.assertIn("1,620", markdown)
+        self.assertIn("含缓存 TPM", html)
+        self.assertIn("1,620", html)
+
+    def test_matrix_exports_include_cache_inclusive_tpm(self):
+        point = {
+            "config": {
+                "base_url": "https://api.example.com",
+                "model": "gpt-5.5",
+                "duration_sec": 10,
+                "enable_stream": True,
+            },
+            "matrix_config": {
+                "input_tokens": 1000,
+                "concurrency": 10,
+            },
+            "results": {
+                "rpm": 60,
+                "qps": 1,
+                "input_tpm": 6000,
+                "output_tpm": 1200,
+                "total_tpm": 7200,
+                "cache_inclusive_tpm": 9600,
+                "cache_hit_tpm": 2400,
+                "input_tps": 100,
+                "output_tps": 20,
+                "total_tps": 120,
+                "success_rate": 1.0,
+                "latency_sec_avg": 1.0,
+                "latency_sec_p50": 1.0,
+                "latency_sec_p95": 1.2,
+                "latency_sec_p99": 1.3,
+                "ttft_sec_avg": 0.2,
+                "ttft_sec_p50": 0.2,
+                "ttft_sec_p95": 0.3,
+                "ttft_sec_p99": 0.4,
+                "decode_sec_avg": 0.8,
+                "decode_sec_p95": 1.0,
+            },
+        }
+
+        markdown = render_matrix_report([point])
+        csv = generate_matrix_csv([point])
+
+        self.assertIn("含缓存 TPM 矩阵", markdown)
+        self.assertIn("9,600", markdown)
+        self.assertIn("cache_inclusive_tpm,cache_hit_tpm", csv)
+        self.assertIn(",7200,9600.0,2400,", csv)
 
     def test_retry_metrics_inclusive_for_failed_results(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)

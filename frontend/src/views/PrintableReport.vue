@@ -72,6 +72,7 @@
                 <th>RPM</th>
                 <th>TPS</th>
                 <th>TPM</th>
+                <th>含缓存 TPM</th>
                 <th>成功率</th>
                 <th>TTFT Avg</th>
                 <th>TTFT P50</th>
@@ -88,6 +89,7 @@
                 <td>{{ number(point.rpm) }}</td>
                 <td>{{ number(point.total_tps) }}</td>
                 <td>{{ number(point.total_tpm) }}</td>
+                <td>{{ number(metricValue(point, 'cache_inclusive_tpm')) }}</td>
                 <td>{{ percent(point.success_rate) }}</td>
                 <td>{{ seconds(point.ttft_avg) }}</td>
                 <td>{{ seconds(point.ttft_p50) }}</td>
@@ -211,26 +213,30 @@ const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
 const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
+const cacheInclusiveTpm = computed(() => metricWithFallback(results.value, 'cache_inclusive_tpm', 'total_tpm'))
+const cacheHitTpm = computed(() => Number(results.value.cache_hit_tpm || 0))
 
 const metricItems = computed(() => {
   if (isMatrix.value) {
     const bestTpm = Math.max(0, ...matrixPoints.value.map((item) => Number(item.total_tpm || 0)))
+    const bestCacheInclusiveTpm = Math.max(0, ...matrixPoints.value.map((item) => metricValue(item, 'cache_inclusive_tpm')))
     const bestRpm = Math.max(0, ...matrixPoints.value.map((item) => Number(item.rpm || 0)))
-    const bestTps = Math.max(0, ...matrixPoints.value.map((item) => Number(item.total_tps || 0)))
     const successRates = matrixPoints.value.map((item) => Number(item.success_rate)).filter(Number.isFinite)
     const avgSuccess = successRates.length ? successRates.reduce((sum, item) => sum + item, 0) / successRates.length : null
     return [
       { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token x 并发' },
       { label: '最高 TPM', value: number(bestTpm), sub: '矩阵峰值' },
+      { label: '最高含缓存 TPM', value: number(bestCacheInclusiveTpm), sub: '矩阵峰值' },
       { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值' },
-      { label: '最高 TPS', value: number(bestTps), sub: `平均成功率 ${percent(avgSuccess)}` }
+      { label: '平均成功率', value: percent(avgSuccess), sub: '全部测试点' }
     ]
   }
   return [
     { label: '总请求', value: number(results.value.total_requests), sub: `成功 ${number(results.value.successful_requests)}` },
     { label: '成功率', value: percent(results.value.success_rate), sub: `失败 ${number(results.value.failed_requests)}` },
     { label: 'RPM', value: number(results.value.rpm), sub: `TPS ${number(results.value.total_tps)}` },
-    { label: 'Total TPM', value: number(results.value.total_tpm), sub: `QPS ${number(results.value.qps)}` }
+    { label: 'Total TPM', value: number(results.value.total_tpm), sub: `QPS ${number(results.value.qps)}` },
+    { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}` }
   ]
 })
 
@@ -301,7 +307,7 @@ function metricRow(label, prefix) {
 function matrixHeatmapOption() {
   const inputs = uniqueSorted(matrixPoints.value.map((item) => item.input_tokens))
   const concurrency = uniqueSorted(matrixPoints.value.map((item) => item.concurrency))
-  const values = matrixPoints.value.map((item) => Number(item.total_tpm)).filter(Number.isFinite)
+  const values = matrixPoints.value.map((item) => metricValue(item, 'cache_inclusive_tpm')).filter(Number.isFinite)
   const max = Math.max(1, ...values)
   const pointMap = new Map(matrixPoints.value.map((item) => [
     `${Number(item.input_tokens)}:${Number(item.concurrency)}`,
@@ -311,7 +317,7 @@ function matrixHeatmapOption() {
   inputs.forEach((inputTokens, yIndex) => {
     concurrency.forEach((concurrencyValue, xIndex) => {
       const point = pointMap.get(`${inputTokens}:${concurrencyValue}`)
-      data.push([xIndex, yIndex, point ? Number(point.total_tpm || 0) : null])
+      data.push([xIndex, yIndex, point ? metricValue(point, 'cache_inclusive_tpm') : null])
     })
   })
   return {
@@ -321,7 +327,7 @@ function matrixHeatmapOption() {
     yAxis: { type: 'category', name: '输入 Token', nameGap: 54, data: inputs.map(compactNumber), splitArea: { show: true } },
     visualMap: { min: 0, max, calculable: false, orient: 'horizontal', left: 'center', bottom: 10, inRange: { color: ['#eff6ff', '#93c5fd', '#16a34a'] } },
     series: [{
-      name: 'TPM',
+      name: '含缓存 TPM',
       type: 'heatmap',
       data,
       label: { show: true, formatter: (params) => compactNumber(params.data?.[2]) },
@@ -403,6 +409,18 @@ function lineOption(labels, series) {
 
 function uniqueSorted(values) {
   return [...new Set(values.map((item) => Number(item)).filter(Number.isFinite))].sort((a, b) => a - b)
+}
+
+function metricValue(item, field) {
+  if (field === 'cache_inclusive_tpm') return metricWithFallback(item, 'cache_inclusive_tpm', 'total_tpm')
+  return Number(item?.[field] || 0)
+}
+
+function metricWithFallback(item, field, fallbackField) {
+  const value = Number(item?.[field])
+  if (Number.isFinite(value) && value > 0) return value
+  const fallback = Number(item?.[fallbackField])
+  return Number.isFinite(fallback) ? fallback : 0
 }
 
 function number(value) {
@@ -572,8 +590,12 @@ onBeforeUnmount(() => {
 .info-grid,
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
+}
+
+.info-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .info-grid div,

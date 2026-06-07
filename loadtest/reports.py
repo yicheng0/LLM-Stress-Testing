@@ -7,6 +7,17 @@ from .metrics import _aggregate_by_time_window, _calculate_histogram, _analyze_m
 from .models import RequestResult
 
 
+def _cache_inclusive_tpm(res: Dict[str, Any]) -> float:
+    value = res.get("cache_inclusive_tpm")
+    if value:
+        return float(value)
+    return float(res.get("total_tpm") or 0)
+
+
+def _cache_inclusive_tps(res: Dict[str, Any]) -> float:
+    return _cache_inclusive_tpm(res) / 60
+
+
 def render_markdown_report(summary: Dict[str, Any]) -> str:
     cfg = summary["config"]
     res = summary["results"]
@@ -86,6 +97,7 @@ def render_markdown_report(summary: Dict[str, Any]) -> str:
 | 输入 | {res['input_tpm']:,.0f} | {res['input_tps']:,.2f} |
 | 输出 | {res['output_tpm']:,.0f} | {res['output_tps']:,.2f} |
 | 总计 | {res['total_tpm']:,.0f} | {res['total_tps']:,.2f} |
+| 含缓存总计 | {_cache_inclusive_tpm(res):,.0f} | {_cache_inclusive_tps(res):,.2f} |
 
 ### 3.3 延迟分布（秒）
 | 指标 | 平均值 | P50 | P90 | P95 | P99 |
@@ -137,6 +149,7 @@ def render_markdown_report(summary: Dict[str, Any]) -> str:
     report += f"""
 ### 7.2 吞吐量评估
 - 峰值 Total-TPM: **{res['total_tpm']:,.0f}**（当前测试）
+- 峰值含缓存 TPM: **{_cache_inclusive_tpm(res):,.0f}**（当前测试）
 - 理论 Total-TPM: 取决于模型容量和硬件配置
 
 ## 8. 结论与建议
@@ -206,6 +219,8 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
     success_count = res["successful_requests"]
     failed_count = res["failed_requests"]
     error_counts = res["error_counts"]
+    cache_inclusive_tpm = _cache_inclusive_tpm(res)
+    cache_hit_tpm = float(res.get("cache_hit_tpm") or 0)
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -221,7 +236,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
         <h1 class="text-4xl font-bold text-gray-900 mb-2">LLM API 压测报告</h1>
         <p class="text-gray-600 mb-8">模型: {cfg['model']} | 并发: {cfg['concurrency']} | 时长: {cfg['duration_sec']}s | 输入来源: {prompt_source}</p>
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="text-sm text-gray-600 mb-1">成功率</div>
                 <div class="text-3xl font-bold text-green-600">{res['success_rate']*100:.2f}%</div>
@@ -236,6 +251,11 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
                 <div class="text-sm text-gray-600 mb-1">Total TPM</div>
                 <div class="text-3xl font-bold text-purple-600">{res['total_tpm']:,.0f}</div>
                 <div class="text-xs text-gray-500 mt-1">TPS: {res['total_tps']:,.1f}</div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-sm text-gray-600 mb-1">含缓存 TPM</div>
+                <div class="text-3xl font-bold text-indigo-600">{cache_inclusive_tpm:,.0f}</div>
+                <div class="text-xs text-gray-500 mt-1">缓存命中 TPM: {cache_hit_tpm:,.1f}</div>
             </div>
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="text-sm text-gray-600 mb-1">延迟 P95</div>
@@ -425,9 +445,10 @@ def render_matrix_report(results_matrix: list[Dict[str, Any]]) -> str:
     matrix_specs = [
         ("2.1 吞吐量矩阵（RPM）", lambda result: f"{result['results']['rpm']:.1f}"),
         ("2.2 Total TPM 矩阵", lambda result: f"{result['results']['total_tpm']:,.0f}"),
-        ("2.3 TTFT P95 矩阵（秒）", lambda result: f"{result['results'].get('ttft_sec_p95'):.2f}" if result['results'].get('ttft_sec_p95') else "N/A"),
-        ("2.4 总延迟 P95 矩阵（秒）", lambda result: f"{result['results'].get('latency_sec_p95'):.2f}" if result['results'].get('latency_sec_p95') else "N/A"),
-        ("2.5 成功率矩阵（%）", lambda result: f"{result['results']['success_rate'] * 100:.2f}"),
+        ("2.3 含缓存 TPM 矩阵", lambda result: f"{_cache_inclusive_tpm(result['results']):,.0f}"),
+        ("2.4 TTFT P95 矩阵（秒）", lambda result: f"{result['results'].get('ttft_sec_p95'):.2f}" if result['results'].get('ttft_sec_p95') else "N/A"),
+        ("2.5 总延迟 P95 矩阵（秒）", lambda result: f"{result['results'].get('latency_sec_p95'):.2f}" if result['results'].get('latency_sec_p95') else "N/A"),
+        ("2.6 成功率矩阵（%）", lambda result: f"{result['results']['success_rate'] * 100:.2f}"),
     ]
     for title, formatter in matrix_specs:
         report += f"\n### {title}\n\n| 输入 Tokens \\ 并发 |"
@@ -464,7 +485,7 @@ def render_matrix_report(results_matrix: list[Dict[str, Any]]) -> str:
 
 def generate_matrix_csv(results_matrix: list[Dict[str, Any]]) -> str:
     csv_lines = [
-        "input_tokens,concurrency,rpm,qps,input_tpm,output_tpm,total_tpm,input_tps,output_tps,total_tps,"
+        "input_tokens,concurrency,rpm,qps,input_tpm,output_tpm,total_tpm,cache_inclusive_tpm,cache_hit_tpm,input_tps,output_tps,total_tps,"
         "success_rate,latency_avg,latency_p50,latency_p95,latency_p99,"
         "ttft_avg,ttft_p50,ttft_p95,ttft_p99,decode_avg,decode_p95"
     ]
@@ -474,7 +495,7 @@ def generate_matrix_csv(results_matrix: list[Dict[str, Any]]) -> str:
         csv_lines.append(
             f"{matrix_cfg['input_tokens']},{matrix_cfg['concurrency']},"
             f"{res['rpm']},{res['qps']},"
-            f"{res['input_tpm']},{res['output_tpm']},{res['total_tpm']},"
+            f"{res['input_tpm']},{res['output_tpm']},{res['total_tpm']},{_cache_inclusive_tpm(res)},{res.get('cache_hit_tpm') or 0},"
             f"{res['input_tps']},{res['output_tps']},{res['total_tps']},"
             f"{res['success_rate']},"
             f"{res.get('latency_sec_avg') or ''},"
