@@ -61,20 +61,31 @@
         <el-form-item label="模型名称" prop="model">
           <el-input v-model="form.model" :placeholder="modelPlaceholder" />
         </el-form-item>
-        <el-form-item label="接入域名" prop="base_url">
-          <el-select v-model="form.base_url" class="full-select">
-            <el-option
-              v-for="option in domainOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            >
-              <div class="domain-option">
+        <el-form-item label="接入域名" prop="base_url" class="full-row">
+          <div class="domain-picker">
+            <div class="domain-mode-grid" role="radiogroup" aria-label="接入域名">
+              <button
+                v-for="option in domainModeOptions"
+                :key="option.key"
+                type="button"
+                class="domain-mode-card"
+                :class="{ active: domainMode === option.key }"
+                :aria-checked="domainMode === option.key"
+                role="radio"
+                @click="selectDomainMode(option.key)"
+              >
                 <span>{{ option.label }}</span>
-                <code>{{ option.value }}</code>
-              </div>
-            </el-option>
-          </el-select>
+                <code>{{ option.displayUrl }}</code>
+              </button>
+            </div>
+            <el-input
+              v-if="domainMode === 'custom'"
+              v-model="customBaseUrl"
+              placeholder="请输入第三方域名，如 https://api.example.com"
+              @input="syncCustomBaseUrl"
+              @blur="trimCustomBaseUrl"
+            />
+          </div>
         </el-form-item>
         <el-form-item v-if="isExpertMode" label="Endpoint" prop="endpoint">
           <el-input v-model="form.endpoint" placeholder="/v1/chat/completions" />
@@ -617,6 +628,11 @@ const defaults = {
 
 const formRef = ref()
 const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
+const builtInDomainValues = new Set(['https://api.wenwen-ai.com', 'https://api.apipro.ai'])
+const initialBaseUrl = String(form.base_url || '').trim()
+form.base_url = initialBaseUrl || defaults.base_url
+const domainMode = ref(builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : 'custom')
+const customBaseUrl = ref(builtInDomainValues.has(initialBaseUrl) ? '' : initialBaseUrl)
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
 const assumedLatencySec = ref(10)
@@ -806,6 +822,18 @@ const domainOptions = [
     value: 'https://api.apipro.ai'
   }
 ]
+const domainModeOptions = [
+  ...domainOptions.map((item) => ({
+    key: item.value,
+    label: item.label,
+    displayUrl: item.value
+  })),
+  {
+    key: 'custom',
+    label: '自定义域名',
+    displayUrl: 'https://api.example.com'
+  }
+]
 const protocolDefaults = {
   openai: {
     stream_endpoint: '/v1/chat/completions',
@@ -850,10 +878,33 @@ const protocolOptions = [
   }
 ]
 
+function validateBaseUrl(_rule, value, callback) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    callback(new Error('请输入接入域名'))
+    return
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    callback(new Error('接入域名必须以 http:// 或 https:// 开头'))
+    return
+  }
+  try {
+    const url = new URL(trimmed)
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
+      callback(new Error('接入域名必须以 http:// 或 https:// 开头'))
+      return
+    }
+  } catch {
+    callback(new Error('接入域名必须是合法 URL，例如 https://api.example.com'))
+    return
+  }
+  callback()
+}
+
 const rules = {
   name: [{ required: true, message: '请输入测试名称', trigger: 'blur' }],
   api_protocol: [{ required: true, message: '请选择接口协议', trigger: 'change' }],
-  base_url: [{ required: true, message: '请选择接入域名', trigger: 'change' }],
+  base_url: [{ required: true, validator: validateBaseUrl, trigger: ['change', 'blur'] }],
   api_key: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
   model: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   endpoint: [{ required: true, message: '请输入 Endpoint', trigger: 'blur' }],
@@ -1169,10 +1220,6 @@ const activeTargetKey = computed(() => {
   return match?.key || ''
 })
 
-function isKnownBaseUrl(value) {
-  return domainOptions.some((item) => item.value === value)
-}
-
 function isKnownEndpoint(value) {
   return Object.values(protocolDefaults).some((item) => (
     item.stream_endpoint === value || item.non_stream_endpoint === value
@@ -1239,6 +1286,31 @@ function targetPresetMainText(preset) {
   return `${number(preset.target_rpm)} RPM`
 }
 
+function selectDomainMode(mode) {
+  domainMode.value = mode
+  if (mode === 'custom') {
+    form.base_url = customBaseUrl.value
+    formRef.value?.validateField('base_url').catch(() => {})
+    return
+  }
+  form.base_url = mode
+  formRef.value?.clearValidate('base_url')
+}
+
+function syncCustomBaseUrl(value) {
+  customBaseUrl.value = value
+  if (domainMode.value === 'custom') {
+    form.base_url = value
+  }
+}
+
+function trimCustomBaseUrl() {
+  customBaseUrl.value = String(customBaseUrl.value || '').trim()
+  if (domainMode.value === 'custom') {
+    form.base_url = customBaseUrl.value
+  }
+}
+
 watch(
   () => form.api_protocol,
   (protocol, previous) => {
@@ -1246,8 +1318,8 @@ watch(
     const nextDefaults = protocolDefaults[protocol] || protocolDefaults.openai
     const previousDefaults = protocolDefaults[previous] || protocolDefaults[lastProtocol.value]
 
-    if (!form.base_url || !isKnownBaseUrl(form.base_url)) {
-      form.base_url = defaults.base_url
+    if (!String(form.base_url || '').trim()) {
+      selectDomainMode(defaults.base_url)
     }
     if (!form.endpoint || isKnownEndpoint(form.endpoint)) {
       form.endpoint = endpointFor(protocol)
@@ -1392,12 +1464,18 @@ function applyTargetEstimate() {
 }
 
 async function submit() {
+  form.base_url = String(form.base_url || '').trim()
+  if (domainMode.value === 'custom') {
+    customBaseUrl.value = form.base_url
+  }
   await formRef.value.validate()
   emit('submit', { ...form, expected_metrics: expectedMetrics.value })
 }
 
 function reset() {
   Object.assign(form, defaults)
+  selectDomainMode(defaults.base_url)
+  customBaseUrl.value = ''
   tokenPreset.value = '1000'
   usageMode.value = 'beginner'
   Object.assign(targetEstimate, {
@@ -1588,18 +1666,69 @@ function reset() {
   width: 100%;
 }
 
-.domain-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.domain-picker {
+  display: grid;
+  gap: 10px;
   width: 100%;
 }
 
-.domain-option code {
+.domain-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.domain-mode-card {
+  display: grid;
+  gap: 5px;
+  min-height: 70px;
+  padding: 11px 12px;
+  border: 1px solid #d8e0ec;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1e293b;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.domain-mode-card:hover {
+  border-color: #93b4e8;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.domain-mode-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+
+.domain-mode-card.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+
+.domain-mode-card span {
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.domain-mode-card code {
+  overflow: hidden;
   color: #64748b;
   font-family: "Fira Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-mode-card.active code {
+  color: #1d4ed8;
 }
 
 .protocol-preview {
@@ -2312,6 +2441,10 @@ function reset() {
 
 @media (max-width: 1100px) {
   .provider-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .domain-mode-grid {
     grid-template-columns: 1fr;
   }
 
