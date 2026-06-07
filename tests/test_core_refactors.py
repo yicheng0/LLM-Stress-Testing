@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException
 
 from backend.app.api import tests as tests_api
+from backend.app.core.auth import AuthUser
 from backend.app.core.task_status import (
     TaskStatus,
     can_transition_task_status,
@@ -36,6 +37,8 @@ from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollecto
 from loadtest.streaming import SseStreamParser
 from loadtest.summary import MetricsAccumulator, MetricsSummaryBuilder, retry_attempt_tokens
 from test_glm_features import _chat_url
+
+ROOT_USER = AuthUser(username="root", role="root")
 
 
 def result(**overrides):
@@ -375,7 +378,7 @@ class CustomPromptConfigTest(unittest.TestCase):
         repository = Repository()
         repository.session = lambda: fake_session
 
-        task = repository.create_task("task-custom", payload)
+        task = repository.create_task("task-custom", payload, ROOT_USER)
         saved = json.loads(task.config_json)
 
         self.assertNotIn("api_key", saved)
@@ -409,7 +412,7 @@ class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
             id=task_id,
             name="matrix",
             api_protocol="openai",
-            base_url="https://example.com",
+            base_url="https://api.wenwen-ai.com",
             endpoint="/v1/chat/completions",
             model="gpt-5.5",
             status=status,
@@ -422,7 +425,7 @@ class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
             config_json=json.dumps({
                 "name": "matrix",
                 "api_protocol": "openai",
-                "base_url": "https://example.com",
+                "base_url": "https://api.wenwen-ai.com",
                 "endpoint": "/v1/chat/completions",
                 "model": "gpt-5.5",
                 "concurrency": 50,
@@ -511,6 +514,7 @@ class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
             await tests_api.resume_matrix_test(
                 "single-task",
                 tests_api.MatrixResumeRequest(api_key="test-key"),
+                user=ROOT_USER,
                 repository=FakeRepository(),
                 manager=object(),
             )
@@ -558,6 +562,7 @@ class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
         response = await tests_api.resume_matrix_test(
             "source-task",
             tests_api.MatrixResumeRequest(api_key="test-key"),
+            user=ROOT_USER,
             repository=repository,
             manager=manager,
         )
@@ -605,12 +610,74 @@ class MatrixResumeTest(unittest.IsolatedAsyncioTestCase):
         repository = Repository()
         repository.session = lambda: fake_session
 
-        repository.create_task("resume-task", payload)
+        repository.create_task("resume-task", payload, ROOT_USER)
         saved = json.loads(fake_session.task.config_json)
 
         self.assertNotIn("api_key", saved)
         self.assertEqual(saved["resume_from_task_id"], "source-task")
         self.assertEqual(saved["resume_policy"], "missing_or_failed")
+
+    async def test_start_test_rejects_guest_builtin_base_url(self):
+        class FakeRepository:
+            def get_task(self, task_id):
+                return None
+
+        class FakeManager:
+            async def start_test(self, payload, user):
+                return "unused"
+
+        payload = TestCreate(api_key="test-key", base_url="https://API.WENWEN-AI.com/")
+
+        with self.assertRaises(HTTPException) as ctx:
+            await tests_api.start_test(
+                payload,
+                user=AuthUser(username="guest_test", role="guest"),
+                repository=FakeRepository(),
+                manager=FakeManager(),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    async def test_start_test_rejects_root_third_party_base_url(self):
+        class FakeRepository:
+            def get_task(self, task_id):
+                return None
+
+        class FakeManager:
+            async def start_test(self, payload, user):
+                return "unused"
+
+        payload = TestCreate(api_key="test-key", base_url="https://third-party.example.com")
+
+        with self.assertRaises(HTTPException) as ctx:
+            await tests_api.start_test(
+                payload,
+                user=AuthUser(username="root", role="root"),
+                repository=FakeRepository(),
+                manager=FakeManager(),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    async def test_resume_matrix_rejects_guest_builtin_source_task(self):
+        source_task = self._task("source-task", matrix_mode=True)
+        source_task.base_url = "https://api.apipro.ai/"
+        source_task.owner_username = "guest_test"
+
+        class FakeRepository:
+            def get_task(self, task_id):
+                return source_task, None
+
+        with self.assertRaises(HTTPException) as ctx:
+            await tests_api.resume_matrix_test(
+                "source-task",
+                tests_api.MatrixResumeRequest(api_key="test-key"),
+                user=AuthUser(username="guest_test", role="guest"),
+                repository=FakeRepository(),
+                manager=object(),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
 
 
 class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
@@ -638,7 +705,7 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self):
                 self.payloads = []
 
-            async def start_test(self, payload):
+            async def start_test(self, payload, user):
                 self.payloads.append(payload)
                 return f"task-{len(self.payloads)}"
 
@@ -669,7 +736,7 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
             duration_sec=5,
         )
 
-        response = await tests_api.start_custom_case_batch(payload, manager=manager)
+        response = await tests_api.start_custom_case_batch(payload, user=ROOT_USER, manager=manager)
 
         self.assertEqual(response.total, 4)
         self.assertEqual(response.started, 4)
@@ -693,7 +760,7 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self):
                 self.calls = 0
 
-            async def start_test(self, payload):
+            async def start_test(self, payload, user):
                 self.calls += 1
                 if payload.batch_channel_name == "失败渠道":
                     raise ValueError("preflight failed")
@@ -720,7 +787,7 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        response = await tests_api.start_custom_case_batch(payload, manager=FakeManager())
+        response = await tests_api.start_custom_case_batch(payload, user=ROOT_USER, manager=FakeManager())
 
         self.assertEqual(response.started, 1)
         self.assertEqual(response.test_ids, ["task-ok"])
@@ -766,7 +833,7 @@ class CustomCaseBatchTest(unittest.IsolatedAsyncioTestCase):
         repository = Repository()
         repository.session = lambda: fake_session
 
-        repository.create_task("batch-task", payload)
+        repository.create_task("batch-task", payload, ROOT_USER)
         saved = json.loads(fake_session.task.config_json)
 
         self.assertNotIn("api_key", saved)
@@ -948,7 +1015,7 @@ class DashboardRepositoryTest(unittest.TestCase):
         fake_session = FakeSession()
         repository.session = lambda: fake_session
 
-        snapshot = repository.dashboard_snapshot()
+        snapshot = repository.dashboard_snapshot(ROOT_USER)
 
         self.assertEqual(snapshot["total"], 1)
         self.assertEqual(snapshot["status_counts"], {"running": 1})

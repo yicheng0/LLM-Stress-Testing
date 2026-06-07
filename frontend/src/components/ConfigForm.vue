@@ -630,17 +630,24 @@ const defaults = {
 
 const formRef = ref()
 const form = reactive({ ...defaults, ...(props.initialConfig || {}) })
-const builtInDomainValues = new Set(['https://api.wenwen-ai.com', 'https://api.apipro.ai'])
+const builtInDomainValues = ['https://api.wenwen-ai.com', 'https://api.apipro.ai']
+const builtInDomainOrigins = new Set(builtInDomainValues.map((value) => normalizeBaseUrlOrigin(value)))
 const initialBaseUrl = String(form.base_url || '').trim()
-form.base_url = initialBaseUrl || defaults.base_url
-const storedCustomBaseUrl = localStorage.getItem('llm_stress_custom_base_url') || ''
-const domainMode = ref(builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : defaults.base_url)
-const customBaseUrl = ref(!builtInDomainValues.has(initialBaseUrl) ? initialBaseUrl : storedCustomBaseUrl)
+const storedCustomBaseUrl = String(localStorage.getItem('llm_stress_custom_base_url') || '').trim()
+const initialBuiltInDomain = builtInDomainValue(initialBaseUrl)
+const domainMode = ref(initialBuiltInDomain || defaults.base_url)
+const initialCustomBaseUrl = auth.role === 'guest'
+  ? ''
+  : initialBaseUrl && !isBuiltInDomain(initialBaseUrl)
+  ? initialBaseUrl
+  : (!isBuiltInDomain(storedCustomBaseUrl) ? storedCustomBaseUrl : '')
+const customBaseUrl = ref(initialCustomBaseUrl)
 const isRootUser = computed(() => auth.role === 'root')
 if (isRootUser.value) {
   form.base_url = domainMode.value
 } else {
   form.base_url = customBaseUrl.value
+  form.api_key = ''
 }
 const lastProtocol = ref(form.api_protocol)
 const tokenPreset = ref('1000')
@@ -831,6 +838,26 @@ const domainOptions = [
     value: 'https://api.apipro.ai'
   }
 ]
+
+function normalizeBaseUrlOrigin(value) {
+  const raw = String(value || '').trim()
+  try {
+    const parsed = new URL(raw)
+    return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}`.replace(/\/$/, '')
+  } catch {
+    return raw.replace(/\/$/, '').toLowerCase()
+  }
+}
+
+function isBuiltInDomain(value) {
+  return builtInDomainOrigins.has(normalizeBaseUrlOrigin(value))
+}
+
+function builtInDomainValue(value) {
+  const origin = normalizeBaseUrlOrigin(value)
+  return builtInDomainValues.find((item) => normalizeBaseUrlOrigin(item) === origin) || ''
+}
+
 const protocolDefaults = {
   openai: {
     stream_endpoint: '/v1/chat/completions',
@@ -883,6 +910,10 @@ function validateBaseUrl(_rule, value, callback) {
   }
   if (!/^https?:\/\//i.test(trimmed)) {
     callback(new Error('接入域名必须以 http:// 或 https:// 开头'))
+    return
+  }
+  if (!isRootUser.value && isBuiltInDomain(trimmed)) {
+    callback(new Error('游客模式请填写第三方接入域名，不能使用内置节点'))
     return
   }
   try {
@@ -1291,7 +1322,9 @@ function selectDomainMode(mode) {
 
 function syncCustomBaseUrl(value) {
   customBaseUrl.value = value
-  localStorage.setItem('llm_stress_custom_base_url', value)
+  if (!isBuiltInDomain(value)) {
+    localStorage.setItem('llm_stress_custom_base_url', value)
+  }
   if (!isRootUser.value) {
     form.base_url = value
   }
@@ -1299,7 +1332,9 @@ function syncCustomBaseUrl(value) {
 
 function trimCustomBaseUrl() {
   customBaseUrl.value = String(customBaseUrl.value || '').trim()
-  localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
+  if (!isBuiltInDomain(customBaseUrl.value)) {
+    localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
+  }
   if (!isRootUser.value) {
     form.base_url = customBaseUrl.value
   }
@@ -1309,6 +1344,9 @@ watch(
   isRootUser,
   (isRoot) => {
     form.base_url = isRoot ? domainMode.value : customBaseUrl.value
+    if (!isRoot) {
+      form.api_key = ''
+    }
     formRef.value?.clearValidate('base_url')
   },
   { immediate: true }
@@ -1424,6 +1462,12 @@ function syncTokenPreset() {
 
 function applyPreset(preset) {
   Object.assign(form, preset.values)
+  if (isRootUser.value) {
+    form.base_url = domainMode.value
+  } else {
+    form.base_url = customBaseUrl.value
+    form.api_key = ''
+  }
   syncTokenPreset()
   formRef.value?.clearValidate([
     'concurrency',
@@ -1470,7 +1514,9 @@ async function submit() {
   form.base_url = String(form.base_url || '').trim()
   if (!isRootUser.value) {
     customBaseUrl.value = form.base_url
-    localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
+    if (!isBuiltInDomain(customBaseUrl.value)) {
+      localStorage.setItem('llm_stress_custom_base_url', customBaseUrl.value)
+    }
   }
   await formRef.value.validate()
   emit('submit', { ...form, expected_metrics: expectedMetrics.value })
@@ -1481,7 +1527,9 @@ function reset() {
   if (isRootUser.value) {
     selectDomainMode(defaults.base_url)
   } else {
+    customBaseUrl.value = ''
     form.base_url = customBaseUrl.value
+    form.api_key = ''
   }
   tokenPreset.value = '1000'
   usageMode.value = 'beginner'

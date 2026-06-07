@@ -172,7 +172,7 @@
       </section>
 
       <footer class="report-footer">
-        APIPro LLM Benchmark Studio · 国内节点 https://api.wenwen-ai.com · 海外节点 https://api.apipro.ai
+        APIPro LLM Benchmark Studio · Base URL {{ config.base_url || '-' }}
       </footer>
     </main>
   </div>

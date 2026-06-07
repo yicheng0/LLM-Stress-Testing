@@ -15,8 +15,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ConfigForm from '../components/ConfigForm.vue'
 import RiskAssessment from '../components/RiskAssessment.vue'
 import { createTest } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 const submitting = ref(false)
 const initialConfig = ref(readInitialConfig())
 const riskSummary = ref(null)
@@ -95,7 +97,11 @@ function readInitialConfig() {
   try {
     const parsed = JSON.parse(raw)
     if (parsed.prompt_source === 'custom') return null
-    return { ...parsed, api_key: '', prompt_source: 'synthetic', custom_prompt: null }
+    const copied = { ...parsed, api_key: '', prompt_source: 'synthetic', custom_prompt: null }
+    if (auth.role === 'guest') {
+      copied.base_url = ''
+    }
+    return copied
   } catch {
     return null
   }

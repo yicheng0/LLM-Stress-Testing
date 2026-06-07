@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+from fastapi import HTTPException
+
 from backend.app.api.docs import convert_curl
+from backend.app.core.auth import AuthUser
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi, infer_json_schema
 from backend.app.models.schemas import CurlConvertRequest
 
@@ -133,6 +136,34 @@ class CurlDocConverterTest(unittest.TestCase):
 
 
 class CurlDocApiTest(unittest.IsolatedAsyncioTestCase):
+    async def test_convert_curl_api_rejects_guest_builtin_base_url(self):
+        with self.assertRaises(HTTPException) as ctx:
+            await convert_curl(
+                CurlConvertRequest(
+                    curl="curl https://api.openai.com/v1/chat/completions -d '{}'",
+                    base_url="https://API.WENWEN-AI.com/",
+                    title="Guest Docs",
+                ),
+                _user=AuthUser(username="guest_test", role="guest"),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    async def test_convert_curl_api_allows_guest_third_party_base_url(self):
+        response = await convert_curl(
+            CurlConvertRequest(
+                curl="""curl https://api.openai.com/v1/chat/completions \
+  -H 'Authorization: Bearer sk-real-key' \
+  -d '{"model":"gpt-5.5","messages":[{"role":"user","content":"Hello"}]}'""",
+                base_url="https://third-party.example.com",
+                title="Guest Docs",
+            ),
+            _user=AuthUser(username="guest_test", role="guest"),
+        )
+
+        self.assertEqual(response.endpoint, "/v1/chat/completions")
+        self.assertIn("https://third-party.example.com/v1/chat/completions", response.sanitized_curl)
+
     async def test_convert_curl_api_accepts_post_without_body(self):
         response = await convert_curl(
             CurlConvertRequest(
@@ -141,7 +172,8 @@ class CurlDocApiTest(unittest.IsolatedAsyncioTestCase):
     -H "Authorization: Bearer $OPENAI_API_KEY" """,
                 base_url="https://api.wenwen-ai.com",
                 title="Cancel",
-            )
+            ),
+            _user=AuthUser(username="root", role="root"),
         )
 
         self.assertEqual(response.method, "POST")

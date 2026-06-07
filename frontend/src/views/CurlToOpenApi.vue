@@ -15,10 +15,16 @@
           <div class="doc-form">
             <div class="grid-2">
               <el-form-item label="目标接入域名">
-                <el-select v-model="form.base_url" class="full-select">
+                <el-select v-if="isRootUser" v-model="form.base_url" class="full-select">
                   <el-option label="国内节点" value="https://api.wenwen-ai.com" />
                   <el-option label="海外节点" value="https://api.apipro.ai" />
                 </el-select>
+                <el-input
+                  v-else
+                  v-model="form.base_url"
+                  placeholder="请输入第三方域名，如 https://api.example.com"
+                  @blur="trimBaseUrl"
+                />
               </el-form-item>
               <el-form-item label="文档标题">
                 <el-input v-model="form.title" maxlength="120" />
@@ -146,18 +152,24 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { Back, CopyDocument, DocumentChecked, RefreshLeft } from '@element-plus/icons-vue'
 import { convertCurlToOpenApi } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(false)
 const result = ref(null)
+const builtInDomainValues = ['https://api.wenwen-ai.com', 'https://api.apipro.ai']
+const builtInDomainOrigins = new Set(builtInDomainValues.map((value) => normalizeBaseUrlOrigin(value)))
+const storedCustomBaseUrl = String(localStorage.getItem('llm_stress_custom_base_url') || '').trim()
+const isRootUser = computed(() => auth.role === 'root')
 
 const form = reactive({
-  base_url: 'https://api.wenwen-ai.com',
+  base_url: isRootUser.value ? 'https://api.wenwen-ai.com' : (!isBuiltInDomain(storedCustomBaseUrl) ? storedCustomBaseUrl : ''),
   title: 'LLM API curl 转换',
   curl: ''
 })
@@ -185,7 +197,7 @@ const templates = [
     key: 'anthropic',
     label: 'Anthropic',
     endpoint: '/messages',
-    curl: `curl https://api.wenwen-ai.com/v1/messages \\
+    curl: `curl https://third-party.example.com/v1/messages \\
   -H 'Content-Type: application/json' \\
   -H 'x-api-key: sk-ant-official-demo' \\
   -H 'anthropic-version: 2023-06-01' \\
@@ -202,7 +214,7 @@ const templates = [
     key: 'gemini',
     label: 'Gemini',
     endpoint: '/v1beta/models/{model-name}:generateContent',
-    curl: `curl https://api.wenwen-ai.com/v1beta/models/gemini-3.1-pro-preview:generateContent \\
+    curl: `curl https://third-party.example.com/v1beta/models/gemini-3.1-pro-preview:generateContent \\
   -H 'Content-Type: application/json' \\
   -H 'x-goog-api-key: official-demo-key' \\
   -d '{
@@ -229,11 +241,60 @@ function reset() {
   result.value = null
 }
 
+function trimBaseUrl() {
+  form.base_url = String(form.base_url || '').trim()
+  if (!isRootUser.value && form.base_url && !isBuiltInDomain(form.base_url)) {
+    localStorage.setItem('llm_stress_custom_base_url', form.base_url)
+  }
+}
+
+function normalizeBaseUrlOrigin(value) {
+  const raw = String(value || '').trim()
+  try {
+    const parsed = new URL(raw)
+    return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}`.replace(/\/$/, '')
+  } catch {
+    return raw.replace(/\/$/, '').toLowerCase()
+  }
+}
+
+function isBuiltInDomain(value) {
+  return builtInDomainOrigins.has(normalizeBaseUrlOrigin(value))
+}
+
+function validateBaseUrl() {
+  trimBaseUrl()
+  if (!form.base_url) {
+    ElMessage.warning('请填写第三方接入域名')
+    return false
+  }
+  if (!/^https?:\/\//i.test(form.base_url)) {
+    ElMessage.warning('接入域名必须以 http:// 或 https:// 开头')
+    return false
+  }
+  if (!isRootUser.value && isBuiltInDomain(form.base_url)) {
+    ElMessage.warning('游客模式请填写第三方接入域名，不能使用内置节点')
+    return false
+  }
+  try {
+    const parsed = new URL(form.base_url)
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+      ElMessage.warning('接入域名必须是合法 URL')
+      return false
+    }
+  } catch {
+    ElMessage.warning('接入域名必须是合法 URL，例如 https://api.example.com')
+    return false
+  }
+  return true
+}
+
 async function convert() {
   if (!form.curl.trim()) {
     ElMessage.warning('请先粘贴官方 curl')
     return
   }
+  if (!validateBaseUrl()) return
   loading.value = true
   try {
     result.value = await convertCurlToOpenApi({

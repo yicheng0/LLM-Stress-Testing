@@ -7,13 +7,17 @@
       </div>
       <div class="section-body">
         <div class="intro-grid">
-          <div>
+          <div v-if="isRootUser">
             <div class="intro-title">国内节点</div>
             <code>https://api.wenwen-ai.com</code>
           </div>
-          <div>
+          <div v-if="isRootUser">
             <div class="intro-title">海外节点</div>
             <code>https://api.apipro.ai</code>
+          </div>
+          <div v-else>
+            <div class="intro-title">第三方接入域名</div>
+            <span>游客模式请填写自己的 API 域名和 API Key</span>
           </div>
           <div>
             <div class="intro-title">支持协议</div>
@@ -108,10 +112,14 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight, DataAnalysis } from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const auth = useAuthStore()
+const isRootUser = computed(() => auth.role === 'root')
 
 const beginnerItems = [
   {
@@ -156,9 +164,9 @@ const groups = [
       {
         name: '接入域名',
         field: 'base_url',
-        meaning: 'APIPro 网关入口域名。',
-        recommendation: '国内用户选国内节点，海外用户选海外节点。',
-        note: '页面已固定为国内和海外两个节点，不需要手动填写。'
+        meaning: '目标 API 的入口域名。',
+        recommendation: 'root 使用国内或海外节点；游客模式填写自己的第三方 API 域名。',
+        note: '游客域名必须以 http:// 或 https:// 开头，且不能使用内置节点。'
       },
       {
         name: 'Endpoint',

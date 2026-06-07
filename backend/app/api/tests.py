@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 
 from backend.app.config import settings
 from backend.app.core.auth import AuthUser, can_access_task, current_user, parse_token, require_root
+from backend.app.core.base_url_policy import is_built_in_base_url
 from backend.app.core.progress import ProgressHub
 from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
@@ -22,7 +23,6 @@ from backend.app.models.schemas import BulkDeleteIn, BulkDeleteOut, CustomCaseBa
 
 router = APIRouter(prefix="/api/tests", tags=["tests"])
 logger = logging.getLogger(__name__)
-BUILT_IN_BASE_URLS = {"https://api.wenwen-ai.com", "https://api.apipro.ai"}
 
 
 def get_repository() -> Repository:
@@ -428,8 +428,7 @@ def _ensure_task_access(task: TestTask, user: AuthUser) -> None:
 
 
 def _ensure_base_url_allowed(base_url: str, user: AuthUser) -> None:
-    normalized = str(base_url or "").rstrip("/")
-    is_built_in = normalized in BUILT_IN_BASE_URLS
+    is_built_in = is_built_in_base_url(base_url)
     if user.role == "root" and not is_built_in:
         raise HTTPException(status_code=403, detail="root 模式只能使用国内或海外节点")
     if user.role == "guest" and is_built_in:
