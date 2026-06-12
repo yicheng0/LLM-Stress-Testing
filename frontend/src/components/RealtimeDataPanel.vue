@@ -199,6 +199,12 @@ import {
 } from '@element-plus/icons-vue'
 import { getRealtimeDashboard } from '../api/client'
 import { loadEcharts } from '../utils/echarts'
+import {
+  isActiveTaskStatus,
+  isTerminalTaskStatus,
+  taskStatusColor,
+  taskStatusLabel
+} from '../utils/taskStatus'
 
 const router = useRouter()
 const loading = ref(false)
@@ -225,11 +231,10 @@ let statusChart
 let protocolChart
 let chartFrame = 0
 
-const activeStatuses = ['queued', 'running', 'stopping']
-const activeTasks = computed(() => items.value.filter((item) => activeStatuses.includes(item.status)))
+const activeTasks = computed(() => items.value.filter((item) => isActiveTaskStatus(item.status)))
 const hasActiveTasks = computed(() => Number(dashboard.value?.active_tasks || activeTasks.value.length) > 0)
 const recentItems = computed(() => [...items.value].sort(taskPriority).slice(0, 8))
-const latestReportTask = computed(() => recentItems.value.find((item) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(item.status)))
+const latestReportTask = computed(() => recentItems.value.find((item) => isTerminalTaskStatus(item.status)))
 const aggregate = computed(() => {
   const metrics = dashboard.value?.metrics || {}
   return {
@@ -431,24 +436,6 @@ function trendOption() {
 }
 
 function statusOption() {
-  const colors = {
-    queued: '#64748b',
-    running: '#2563eb',
-    stopping: '#f97316',
-    completed: '#16a34a',
-    failed: '#dc2626',
-    cancelled: '#f59e0b',
-    interrupted: '#9333ea'
-  }
-  const names = {
-    queued: '排队',
-    running: '运行',
-    stopping: '停止中',
-    completed: '完成',
-    failed: '失败',
-    cancelled: '取消',
-    interrupted: '中断'
-  }
   return {
     tooltip: { trigger: 'item' },
     legend: { bottom: 0 },
@@ -457,9 +444,9 @@ function statusOption() {
       radius: ['48%', '72%'],
       center: ['50%', '43%'],
       data: Object.entries(dashboard.value?.status_counts || countBy(items.value, 'status')).map(([key, value]) => ({
-        name: names[key] || key,
+        name: taskStatusLabel(key),
         value,
-        itemStyle: { color: colors[key] || '#64748b' }
+        itemStyle: { color: taskStatusColor(key) }
       }))
     }]
   }
@@ -508,14 +495,14 @@ function resizeCharts() {
 function taskPriority(a, b) {
   const score = (item) => {
     if (item.status === 'failed' || item.status === 'interrupted') return 0
-    if (activeStatuses.includes(item.status)) return 1
+    if (isActiveTaskStatus(item.status)) return 1
     return 2
   }
   return score(a) - score(b) || Date.parse(b.created_at || '') - Date.parse(a.created_at || '')
 }
 
 function goTask(item) {
-  if (['completed', 'failed', 'cancelled', 'interrupted'].includes(item.status)) {
+  if (isTerminalTaskStatus(item.status)) {
     router.push(`/tests/${item.id}/report`)
     return
   }
@@ -546,16 +533,7 @@ async function toggleFullscreen() {
 }
 
 function statusText(status) {
-  const names = {
-    queued: '排队',
-    running: '运行',
-    stopping: '停止中',
-    completed: '完成',
-    failed: '失败',
-    cancelled: '取消',
-    interrupted: '中断'
-  }
-  return names[status] || status || '-'
+  return taskStatusLabel(status)
 }
 
 function phaseText(item) {

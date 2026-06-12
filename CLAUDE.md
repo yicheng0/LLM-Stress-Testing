@@ -78,6 +78,12 @@ GLM API Load Testing Suite - A comprehensive performance testing framework for L
 - TPS (Tokens Per Second): `total_tokens / wall_time`
 - Tracked separately for input/output/total tokens
 
+**Cache Hit Rate**
+- Token-level cache hit rate: `cached_input_tokens / max(total_input_tokens, cached_input_tokens + cache_creation_input_tokens)`
+- Reported in realtime progress, summaries, Markdown/HTML reports, matrix CSV, and web reports
+- Supported usage fields include OpenAI `prompt_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`, Gemini `cachedContentTokenCount`, and gateway `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+- If the upstream API does not expose cache usage fields, cache metrics remain `0` and the loader does not infer hits from repeated prompt content
+
 **Percentiles**
 - P50 (median): typical case performance
 - P95: captures tail latency, critical for SLA

@@ -33,6 +33,7 @@ class TaskManager:
         self.progress_hub = progress_hub
         self.tasks: dict[str, asyncio.Task] = {}
         self.stop_events: dict[str, asyncio.Event] = {}
+        self.stop_reasons: dict[str, str] = {}
 
     def running_count(self) -> int:
         self._discard_finished_tasks()
@@ -58,6 +59,7 @@ class TaskManager:
         for task_id in finished_task_ids:
             self.tasks.pop(task_id, None)
             self.stop_events.pop(task_id, None)
+            self.stop_reasons.pop(task_id, None)
 
     async def start_test(self, payload: TestCreate, owner: AuthUser) -> str:
         return await self._start_test(payload, owner=owner)
@@ -143,6 +145,7 @@ class TaskManager:
         stop_event = self.stop_events.get(task_id)
         if not stop_event:
             return False
+        self.stop_reasons[task_id] = "user_requested"
         stop_event.set()
         self.repository.update_task_status(task_id, TaskStatus.STOPPING.value)
         self.repository.add_event(task_id, "warning", "用户请求停止任务")
@@ -196,8 +199,10 @@ class TaskManager:
                 detail_count=files.get("detail_count"),
                 error_message=self._final_error_message(result.get("summary")) if final_status == "failed" else None,
             )
-            if stop_event.is_set():
-                final_status = stopped_final_status(True, final_status)
+            final_status = stopped_final_status(
+                self.stop_reasons.get(task_id) == "user_requested",
+                final_status,
+            )
             self.repository.update_task_status(task_id, final_status, completed_at=datetime.utcnow())
             self.repository.add_event(task_id, "info", f"任务已{final_status}")
             await self.progress_hub.publish_status(task_id, final_status)
@@ -210,6 +215,7 @@ class TaskManager:
             await self.progress_hub.publish_log(task_id, "error", message)
         finally:
             self.stop_events.pop(task_id, None)
+            self.stop_reasons.pop(task_id, None)
             self.tasks.pop(task_id, None)
 
     @staticmethod

@@ -150,6 +150,8 @@ def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
             "cache_hit_tpm": best_cache_hit_tpm,
             "cache_inclusive_tpm": best_cache_inclusive_tpm,
             "total_cached_input_tokens": total_cached_input_tokens,
+            "total_cache_creation_input_tokens": total_cache_creation_input_tokens,
+            "total_input_tokens": total_input_tokens,
             "cache_hit_rate": (
                 total_cached_input_tokens / max(total_input_tokens, total_cached_input_tokens + total_cache_creation_input_tokens)
                 if max(total_input_tokens, total_cached_input_tokens + total_cache_creation_input_tokens) > 0 else 0.0
@@ -179,6 +181,8 @@ def _dashboard_task_item(
         item_cache_hit_tpm = _num(progress.get("current_cache_hit_tpm"), _num(summary_results.get("cache_hit_tpm")))
         item_cache_inclusive_tpm = _num(progress.get("current_cache_inclusive_tpm"), _num(summary_results.get("cache_inclusive_tpm")))
         item_cached_input_tokens = _num(progress.get("current_cached_input_tokens"), _num(summary_results.get("total_cached_input_tokens")))
+        item_total_input_tokens = _num(progress.get("current_input_tokens"), _num(summary_results.get("total_input_tokens")))
+        item_cache_creation_input_tokens = _num(progress.get("current_cache_creation_input_tokens"), _num(summary_results.get("total_cache_creation_input_tokens")))
         item_cache_hit_rate = progress.get("current_cache_hit_rate", summary_results.get("cache_hit_rate"))
         item_attempt_rpm = _num(progress.get("attempt_rpm"), _num(summary_results.get("attempt_rpm")))
         item_attempt_tpm = _num(progress.get("attempt_tpm"), _num(summary_results.get("attempt_tpm")))
@@ -193,6 +197,8 @@ def _dashboard_task_item(
         item_cache_hit_tpm = _num(summary_results.get("cache_hit_tpm"))
         item_cache_inclusive_tpm = _num(summary_results.get("cache_inclusive_tpm"))
         item_cached_input_tokens = _num(summary_results.get("total_cached_input_tokens"))
+        item_total_input_tokens = _num(summary_results.get("total_input_tokens"))
+        item_cache_creation_input_tokens = _num(summary_results.get("total_cache_creation_input_tokens"))
         item_cache_hit_rate = summary_results.get("cache_hit_rate")
         item_attempt_rpm = _num(summary_results.get("attempt_rpm"))
         item_attempt_tpm = _num(summary_results.get("attempt_tpm"))
@@ -207,6 +213,8 @@ def _dashboard_task_item(
         "cache_hit_tpm": item_cache_hit_tpm,
         "cache_inclusive_tpm": item_cache_inclusive_tpm,
         "cached_input_tokens": item_cached_input_tokens,
+        "total_input_tokens": item_total_input_tokens,
+        "cache_creation_input_tokens": item_cache_creation_input_tokens,
         "cache_hit_rate": item_cache_hit_rate,
         "attempt_rpm": item_attempt_rpm,
         "attempt_tpm": item_attempt_tpm,
@@ -234,6 +242,8 @@ def _dashboard_task_item(
         "cache_hit_tpm": item_cache_hit_tpm,
         "cache_inclusive_tpm": item_cache_inclusive_tpm,
         "cached_input_tokens": item_cached_input_tokens,
+        "total_input_tokens": item_total_input_tokens,
+        "cache_creation_input_tokens": item_cache_creation_input_tokens,
         "cache_hit_rate": item_cache_hit_rate,
         "attempt_rpm": item_attempt_rpm,
         "attempt_tpm": item_attempt_tpm,
@@ -635,11 +645,9 @@ async def realtime_dashboard(
     cache_hit_tpm = sum(_num(item.get("cache_hit_tpm")) for item in sources)
     cache_inclusive_tpm = sum(_num(item.get("cache_inclusive_tpm")) for item in sources)
     cached_input_tokens = sum(_num(item.get("cached_input_tokens")) for item in sources)
-    cache_rate_values = [
-        _num(item.get("cache_hit_rate"))
-        for item in sources
-        if item.get("cache_hit_rate") is not None
-    ]
+    input_tokens = sum(_num(item.get("total_input_tokens")) for item in sources)
+    cache_creation_input_tokens = sum(_num(item.get("cache_creation_input_tokens")) for item in sources)
+    cache_hit_denominator = max(input_tokens, cached_input_tokens + cache_creation_input_tokens)
     attempt_rpm = sum(_num(item.get("attempt_rpm")) for item in sources)
     attempt_tpm = sum(_num(item.get("attempt_tpm")) for item in sources)
     expected_rpm = sum(_num(item.get("rpm")) for item in target_sources if item.get("rpm") is not None)
@@ -672,7 +680,7 @@ async def realtime_dashboard(
             "cache_hit_tpm": round(cache_hit_tpm, 4),
             "cache_inclusive_tpm": round(cache_inclusive_tpm, 4),
             "cached_input_tokens": round(cached_input_tokens, 4),
-            "cache_hit_rate": round(sum(cache_rate_values) / len(cache_rate_values), 4) if cache_rate_values else 0.0,
+            "cache_hit_rate": round(cached_input_tokens / cache_hit_denominator, 4) if cache_hit_denominator > 0 else 0.0,
             "attempt_rpm": round(attempt_rpm, 4),
             "attempt_tpm": round(attempt_tpm, 4),
             "expected_rpm": round(expected_rpm, 4) if expected_rpm else None,

@@ -22,6 +22,7 @@ from backend.app.core.preflight import _body as preflight_body
 from backend.app.core.repository import Repository
 from backend.app.core.report_service import build_chart_data, load_chart_cache, load_details
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi, infer_json_schema
+from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestResult as DbTestResult
 from backend.app.models.database import TestTask as DbTestTask
 from backend.app.models.schemas import CustomCaseBatchCase, CustomCaseBatchChannel, CustomCaseBatchRequest, TestCreate
@@ -72,6 +73,116 @@ class TaskStatusTest(unittest.TestCase):
     def test_stop_request_wins_over_computed_status(self):
         self.assertEqual(stopped_final_status(True, "completed"), "cancelled")
         self.assertEqual(stopped_final_status(False, "completed"), "completed")
+
+
+class TaskManagerStatusTest(unittest.IsolatedAsyncioTestCase):
+    async def test_natural_stop_event_does_not_cancel_completed_task(self):
+        repository = self.FakeRepository()
+        progress_hub = self.FakeProgressHub()
+        manager = TaskManager(repository, progress_hub)
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        with self.patch_web_runner(stop_event):
+            await manager._run_test("task-natural", {}, stop_event)
+
+        self.assertEqual(repository.statuses[-1][1], "completed")
+        self.assertNotIn("task-natural", manager.stop_reasons)
+        self.assertEqual(progress_hub.statuses[-1], ("task-natural", "completed"))
+
+    async def test_user_requested_stop_cancels_completed_task(self):
+        repository = self.FakeRepository()
+        progress_hub = self.FakeProgressHub()
+        manager = TaskManager(repository, progress_hub)
+        stop_event = asyncio.Event()
+        manager.stop_events["task-user-stop"] = stop_event
+
+        stopped = await manager.stop_test("task-user-stop")
+        self.assertTrue(stopped)
+        self.assertEqual(manager.stop_reasons["task-user-stop"], "user_requested")
+
+        with self.patch_web_runner(stop_event):
+            await manager._run_test("task-user-stop", {}, stop_event)
+
+        self.assertEqual(repository.statuses[-1][1], "cancelled")
+        self.assertNotIn("task-user-stop", manager.stop_reasons)
+        self.assertEqual(progress_hub.statuses[-1], ("task-user-stop", "cancelled"))
+
+    class FakeRepository:
+        def __init__(self):
+            self.statuses = []
+            self.results = []
+            self.events = []
+
+        def update_task_status(self, task_id, status, **kwargs):
+            self.statuses.append((task_id, status, kwargs))
+
+        def save_result(self, task_id, **kwargs):
+            self.results.append((task_id, kwargs))
+
+        def add_event(self, task_id, level, message):
+            self.events.append((task_id, level, message))
+
+    class FakeProgressHub:
+        def __init__(self):
+            self.statuses = []
+            self.logs = []
+            self.progress = []
+
+        async def publish_status(self, task_id, status):
+            self.statuses.append((task_id, status))
+
+        async def publish_log(self, task_id, level, message):
+            self.logs.append((task_id, level, message))
+
+        async def publish_progress(self, task_id, data):
+            self.progress.append((task_id, data))
+
+    class patch_web_runner:
+        def __init__(self, expected_stop_event):
+            self.expected_stop_event = expected_stop_event
+            self.original = None
+
+        def __enter__(self):
+            import backend.app.core.task_manager as task_manager_module
+
+            self.original = task_manager_module.WebLoadTestRunner
+            expected_stop_event = self.expected_stop_event
+
+            class FakeWebLoadTestRunner:
+                def __init__(self, *args, **kwargs):
+                    self.stop_event = kwargs["stop_event"]
+
+                async def run(self):
+                    self.stop_event.set()
+                    self_run_summary = {
+                        "results": {
+                            "total_requests": 1,
+                            "successful_requests": 1,
+                            "success_rate": 1.0,
+                        }
+                    }
+                    assert self.stop_event is expected_stop_event
+                    return {
+                        "summary": self_run_summary,
+                        "files": {
+                            "summary_path": "summary.json",
+                            "details_jsonl_path": "details.jsonl",
+                            "report_md_path": "report.md",
+                            "report_html_path": "report.html",
+                            "matrix_csv_path": None,
+                            "charts_path": "charts.json",
+                            "detail_count": 1,
+                        },
+                    }
+
+            task_manager_module.WebLoadTestRunner = FakeWebLoadTestRunner
+
+        def __exit__(self, exc_type, exc, tb):
+            import backend.app.core.task_manager as task_manager_module
+
+            task_manager_module.WebLoadTestRunner = self.original
+            return False
 
 
 class MetricsAccumulatorTest(unittest.TestCase):
@@ -1120,6 +1231,8 @@ class DashboardRepositoryTest(unittest.TestCase):
                     "cache_hit_tpm": 20,
                     "cache_inclusive_tpm": 120,
                     "total_cached_input_tokens": 40,
+                    "total_input_tokens": 160,
+                    "total_cache_creation_input_tokens": 5,
                     "cache_hit_rate": 0.25,
                 },
             }),
@@ -1133,6 +1246,8 @@ class DashboardRepositoryTest(unittest.TestCase):
                     "current_cache_hit_tpm": 60,
                     "current_cache_inclusive_tpm": 260,
                     "current_cached_input_tokens": 80,
+                    "current_input_tokens": 200,
+                    "current_cache_creation_input_tokens": 20,
                     "current_cache_hit_rate": 0.4,
                 }
 
@@ -1146,8 +1261,11 @@ class DashboardRepositoryTest(unittest.TestCase):
         self.assertEqual(task_item["cache_hit_tpm"], 60)
         self.assertEqual(task_item["cache_inclusive_tpm"], 260)
         self.assertEqual(task_item["cached_input_tokens"], 80)
+        self.assertEqual(task_item["total_input_tokens"], 200)
+        self.assertEqual(task_item["cache_creation_input_tokens"], 20)
         self.assertEqual(task_item["cache_hit_rate"], 0.4)
         self.assertEqual(metric_item["cache_hit_tpm"], 60)
+        self.assertEqual(metric_item["total_input_tokens"], 200)
 
         task.status = "completed"
         task_item, metric_item, _targets, _is_active = tests_api._dashboard_task_item(
@@ -1160,8 +1278,97 @@ class DashboardRepositoryTest(unittest.TestCase):
         self.assertEqual(task_item["cache_hit_tpm"], 20)
         self.assertEqual(task_item["cache_inclusive_tpm"], 120)
         self.assertEqual(task_item["cached_input_tokens"], 40)
+        self.assertEqual(task_item["total_input_tokens"], 160)
+        self.assertEqual(task_item["cache_creation_input_tokens"], 5)
         self.assertEqual(task_item["cache_hit_rate"], 0.25)
         self.assertEqual(metric_item["cache_inclusive_tpm"], 120)
+
+    def test_realtime_dashboard_uses_token_weighted_cache_hit_rate(self):
+        task_small = DbTestTask(
+            id="task-small",
+            name="Small",
+            api_protocol="openai",
+            base_url="https://example.com",
+            endpoint="/v1/chat/completions",
+            model="gpt-5.5",
+            status="running",
+            concurrency=1,
+            duration_sec=1,
+            input_tokens=1,
+            max_output_tokens=1,
+            enable_stream=True,
+            matrix_mode=False,
+            config_json=json.dumps({"api_protocol": "openai"}),
+            created_at=datetime.now(UTC),
+        )
+        task_large = DbTestTask(
+            id="task-large",
+            name="Large",
+            api_protocol="openai",
+            base_url="https://example.com",
+            endpoint="/v1/chat/completions",
+            model="gpt-5.5",
+            status="running",
+            concurrency=1,
+            duration_sec=1,
+            input_tokens=1,
+            max_output_tokens=1,
+            enable_stream=True,
+            matrix_mode=False,
+            config_json=json.dumps({"api_protocol": "openai"}),
+            created_at=datetime.now(UTC),
+        )
+        rows = [(task_small, None), (task_large, None)]
+
+        class FakeRepository:
+            def dashboard_snapshot(self, user, recent_limit=8):
+                return {
+                    "total": 2,
+                    "status_counts": {"running": 2},
+                    "protocol_counts": {"openai": 2},
+                    "model_counts": {"gpt-5.5": 2},
+                    "error_counts": {},
+                    "active_rows": rows,
+                    "recent_rows": rows,
+                }
+
+        class FakeProgressHub:
+            def snapshot(self, task_id):
+                if task_id == "task-small":
+                    return {
+                        "current_rpm": 1,
+                        "current_tpm": 10,
+                        "current_cache_hit_tpm": 9,
+                        "current_cache_inclusive_tpm": 10,
+                        "current_cached_input_tokens": 9,
+                        "current_input_tokens": 10,
+                        "current_cache_creation_input_tokens": 0,
+                        "current_cache_hit_rate": 0.9,
+                    }
+                return {
+                    "current_rpm": 1,
+                    "current_tpm": 1000,
+                    "current_cache_hit_tpm": 100,
+                    "current_cache_inclusive_tpm": 1000,
+                    "current_cached_input_tokens": 100,
+                    "current_input_tokens": 1000,
+                    "current_cache_creation_input_tokens": 0,
+                    "current_cache_hit_rate": 0.1,
+                }
+
+        class FakeManager:
+            def reconcile_active_tasks(self):
+                return None
+
+        dashboard = asyncio.run(tests_api.realtime_dashboard(
+            user=ROOT_USER,
+            repository=FakeRepository(),
+            progress_hub=FakeProgressHub(),
+            manager=FakeManager(),
+        ))
+
+        self.assertEqual(dashboard["metrics"]["cached_input_tokens"], 109)
+        self.assertEqual(dashboard["metrics"]["cache_hit_rate"], 0.1079)
 
 
 class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
@@ -1291,19 +1498,31 @@ class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
         runner._success_cache_inclusive_token_count = 120
         runner.metrics_accumulator.total_input_tokens = 100
         runner.metrics_accumulator.total_cached_input_tokens = 40
+        runner.metrics_accumulator.total_cache_creation_input_tokens = 10
         runner._attempt_count = 3
         runner._attempt_token_count = 300
         runner.metrics_accumulator.total_requests = 1
+
+        cache_snapshot = runner._cache_progress_snapshot(10)
+        self.assertEqual(cache_snapshot["current_cached_input_tokens"], 40)
+        self.assertEqual(cache_snapshot["current_input_tokens"], 100)
+        self.assertEqual(cache_snapshot["current_cache_creation_input_tokens"], 10)
+        self.assertEqual(cache_snapshot["current_cache_hit_rate"], 0.4)
 
         await runner.emit_progress(force=True)
 
         self.assertIn("current_cache_hit_tpm", captured)
         self.assertIn("current_cache_inclusive_tpm", captured)
         self.assertIn("current_cached_input_tokens", captured)
+        self.assertIn("current_input_tokens", captured)
+        self.assertIn("current_cache_creation_input_tokens", captured)
         self.assertIn("current_cache_hit_rate", captured)
         self.assertGreater(captured["current_cache_hit_tpm"], 0)
         self.assertGreater(captured["current_cache_inclusive_tpm"], 0)
         self.assertEqual(captured["current_cached_input_tokens"], 40)
+        self.assertEqual(captured["current_input_tokens"], 100)
+        self.assertEqual(captured["current_cache_creation_input_tokens"], 10)
+        self.assertEqual(captured["current_cache_hit_rate"], 0.4)
         self.assertIn("attempt_rpm", captured)
         self.assertIn("attempt_tpm", captured)
         self.assertGreater(captured["attempt_rpm"], captured["current_rpm"])

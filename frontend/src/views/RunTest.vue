@@ -86,6 +86,7 @@ import ProgressPanel from '../components/ProgressPanel.vue'
 import RunDiagnostics from '../components/RunDiagnostics.vue'
 import { createProgressSocket, getReport, getTest, stopTest } from '../api/client'
 import { useRealtimeSocket } from '../composables/useRealtimeSocket'
+import { isTerminalTaskStatus } from '../utils/taskStatus'
 
 const props = defineProps({
   id: {
@@ -110,7 +111,7 @@ let finalizing = false
 const { socketStatus, connect: connectLiveSocket, markEnded: markSocketEnded } = useRealtimeSocket({
   createSocket: createProgressSocket,
   getStatus: () => status.value,
-  isTerminalStatus,
+  isTerminalStatus: isTerminalTaskStatus,
   onProgress: (data) => {
     progress.value = data
     markUpdated()
@@ -266,7 +267,7 @@ function applyTaskSnapshot(data) {
     finalSummaryLoaded = true
   }
   markUpdated()
-  if (isTerminalStatus(data.status)) {
+  if (isTerminalTaskStatus(data.status)) {
     finalizeRun()
   }
 }
@@ -277,7 +278,7 @@ function connectSocket() {
 
 function startPolling() {
   pollTimer = window.setInterval(async () => {
-    if (isTerminalStatus(status.value)) return
+    if (isTerminalTaskStatus(status.value)) return
     try {
       const data = await getTest(props.id)
       applyTaskSnapshot(data)
@@ -307,7 +308,7 @@ async function confirmStop() {
     ElMessage.error(error.message)
     await loadTask()
   } finally {
-    if (isTerminalStatus(status.value)) stopping.value = false
+    if (isTerminalTaskStatus(status.value)) stopping.value = false
   }
 }
 
@@ -364,7 +365,7 @@ function handleStatusUpdate(nextStatus) {
   status.value = nextStatus
   if (task.value) task.value.status = nextStatus
   markUpdated()
-  if (isTerminalStatus(nextStatus)) {
+  if (isTerminalTaskStatus(nextStatus)) {
     stopping.value = false
     finalizeRun()
   }
@@ -372,10 +373,6 @@ function handleStatusUpdate(nextStatus) {
 
 function markUpdated() {
   lastUpdatedAt.value = new Date().toISOString()
-}
-
-function isTerminalStatus(value) {
-  return ['completed', 'failed', 'cancelled', 'interrupted'].includes(value)
 }
 
 function sleep(ms) {
@@ -451,7 +448,7 @@ const socketTagType = computed(() => {
 onMounted(async () => {
   await loadTask()
   connectSocket()
-  if (!isTerminalStatus(status.value)) startPolling()
+  if (!isTerminalTaskStatus(status.value)) startPolling()
 })
 
 onBeforeUnmount(() => {

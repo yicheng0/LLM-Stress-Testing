@@ -272,6 +272,21 @@ class LoadTestRunner:
         else:
             self._failure_count += 1
 
+    def _cache_progress_snapshot(self, elapsed: float) -> dict[str, Any]:
+        elapsed = max(0.001, elapsed)
+        return {
+            "current_cache_hit_tpm": round(self._success_cached_input_count * 60 / elapsed, 4),
+            "current_cache_inclusive_tpm": round(self._success_cache_inclusive_token_count * 60 / elapsed, 4),
+            "current_cached_input_tokens": self._success_cached_input_count,
+            "current_input_tokens": self.metrics_accumulator.total_input_tokens,
+            "current_cache_creation_input_tokens": self.metrics_accumulator.total_cache_creation_input_tokens,
+            "current_cache_hit_rate": cache_hit_rate(
+                self._success_cached_input_count,
+                self.metrics_accumulator.total_cache_creation_input_tokens,
+                self.metrics_accumulator.total_input_tokens,
+            ),
+        }
+
     async def emit_progress(self, force: bool = False) -> None:
         if not self.progress_callback:
             return
@@ -282,6 +297,7 @@ class LoadTestRunner:
         start_time = self.test_start_wall_time or self.test_start_time
         elapsed = max(0.001, now - start_time) if start_time else 0.001
         recent_latency = statistics.mean(self._success_latency_window) if self._success_latency_window else 0.0
+        cache_progress = self._cache_progress_snapshot(elapsed)
         self.last_progress_emit_at = now
         await self._maybe_await(self.progress_callback({
             "completed_requests": total,
@@ -291,14 +307,7 @@ class LoadTestRunner:
             "current_qps": round(self._success_count / elapsed, 4),
             "current_rpm": round(self._success_count * 60 / elapsed, 4),
             "current_tpm": round(self._success_token_count * 60 / elapsed, 4),
-            "current_cache_hit_tpm": round(self._success_cached_input_count * 60 / elapsed, 4),
-            "current_cache_inclusive_tpm": round(self._success_cache_inclusive_token_count * 60 / elapsed, 4),
-            "current_cached_input_tokens": self._success_cached_input_count,
-            "current_cache_hit_rate": cache_hit_rate(
-                self._success_cached_input_count,
-                self.metrics_accumulator.total_cache_creation_input_tokens,
-                self.metrics_accumulator.total_input_tokens,
-            ),
+            **cache_progress,
             "attempt_qps": round(self._attempt_count / elapsed, 4),
             "attempt_rpm": round(self._attempt_count * 60 / elapsed, 4),
             "attempt_tpm": round(self._attempt_token_count * 60 / elapsed, 4),
@@ -447,17 +456,13 @@ class LoadTestRunner:
                     await self.emit_log("error", f"req#{result.request_id} FAIL({result.error_type}) status={result.status} latency={result.latency_sec:.2f}s msg={error_msg}")
                 if total % 50 == 0:
                     avg_latency = statistics.mean(self._success_latency_window) if self._success_latency_window else 0
-                    current_cache_hit_rate = cache_hit_rate(
-                        self._success_cached_input_count,
-                        self.metrics_accumulator.total_cache_creation_input_tokens,
-                        self.metrics_accumulator.total_input_tokens,
-                    ) * 100
-                    current_cache_hit_tpm = self._success_cached_input_count * 60 / max(0.001, time.time() - (self.test_start_wall_time or time.time()))
-                    current_cache_inclusive_tpm = self._success_cache_inclusive_token_count * 60 / max(0.001, time.time() - (self.test_start_wall_time or time.time()))
+                    cache_progress = self._cache_progress_snapshot(time.time() - (self.test_start_wall_time or time.time()))
                     progress_text = (
                         f"已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, "
-                        f"缓存命中率={current_cache_hit_rate:.2f}%, 缓存命中TPM={current_cache_hit_tpm:.1f}, "
-                        f"含缓存TPM={current_cache_inclusive_tpm:.1f}, 近10次平均延迟={avg_latency:.2f}s"
+                        f"缓存命中率={cache_progress['current_cache_hit_rate'] * 100:.2f}%, "
+                        f"缓存命中TPM={cache_progress['current_cache_hit_tpm']:.1f}, "
+                        f"含缓存TPM={cache_progress['current_cache_inclusive_tpm']:.1f}, "
+                        f"近10次平均延迟={avg_latency:.2f}s"
                     )
                     print(f"  [{elapsed:>4}s] {progress_text}", flush=True)
                     await self.emit_log("info", progress_text)

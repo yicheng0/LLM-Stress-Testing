@@ -64,6 +64,7 @@
 <script setup>
 import { computed } from 'vue'
 import { DataAnalysis, SwitchButton } from '@element-plus/icons-vue'
+import { isActiveTaskStatus, isTerminalTaskStatus, taskStatusLabel } from '../utils/taskStatus'
 
 const props = defineProps({
   status: {
@@ -82,20 +83,9 @@ const props = defineProps({
 
 defineEmits(['stop', 'report'])
 
-const statusMap = {
-  queued: '排队中',
-  running: '运行中',
-  stopping: '停止中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消',
-  interrupted: '已中断'
-}
-
-const terminalStatuses = ['completed', 'failed', 'cancelled', 'interrupted']
-const statusText = computed(() => statusMap[props.status] || props.status)
-const canStop = computed(() => ['queued', 'running', 'stopping'].includes(props.status) || props.stopping)
-const canReport = computed(() => terminalStatuses.includes(props.status))
+const statusText = computed(() => taskStatusLabel(props.status, { long: true }))
+const canStop = computed(() => isActiveTaskStatus(props.status) || props.stopping)
+const canReport = computed(() => isTerminalTaskStatus(props.status))
 const phaseText = computed(() => {
   if (props.progress?.phase === 'cache_warmup') {
     return `缓存预热 ${number(props.progress?.cache_warmup_completed)} / ${number(props.progress?.cache_warmup_requests)}`
@@ -103,7 +93,7 @@ const phaseText = computed(() => {
   if (props.progress?.phase === 'warmup') return '预热中'
   if (props.progress?.phase === 'load') return '正式压测'
   if (props.progress?.phase === 'completed') return '已结束'
-  return terminalStatuses.includes(props.status) ? '已结束' : '等待启动'
+  return isTerminalTaskStatus(props.status) ? '已结束' : '等待启动'
 })
 const progressPercent = computed(() => {
   const elapsed = actualRuntimeSec.value
@@ -111,7 +101,7 @@ const progressPercent = computed(() => {
   if (duration > 0) {
     return Math.min(100, Math.round((elapsed / duration) * 100))
   }
-  return terminalStatuses.includes(props.status) ? 100 : 0
+  return isTerminalTaskStatus(props.status) ? 100 : 0
 })
 const progressStatus = computed(() => {
   if (props.status === 'failed') return 'exception'
@@ -129,7 +119,7 @@ const actualRuntimeSec = computed(() => {
   return 0
 })
 const remainingText = computed(() => {
-  if (terminalStatuses.includes(props.status)) return '0s'
+  if (isTerminalTaskStatus(props.status)) return '0s'
   const target = Number(props.progress?.duration_sec || props.progress?.target_duration_sec || 0)
   if (!target) return '-'
   return duration(Math.max(0, target - actualRuntimeSec.value))
@@ -137,7 +127,7 @@ const remainingText = computed(() => {
 const summaryText = computed(() => {
   if (props.progress?.final_summary) return '已拉取'
   if (props.progress?.final_summary_loading) return '拉取中'
-  return terminalStatuses.includes(props.status) ? '待生成' : '运行中'
+  return isTerminalTaskStatus(props.status) ? '待生成' : '运行中'
 })
 
 function number(value) {

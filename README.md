@@ -11,8 +11,11 @@ LLM Stress Testing is a performance benchmarking and stress testing toolkit for 
 - **Average Latency**: Average request completion time
 - **P50 Latency**: Median response latency
 - **P99 Latency**: Tail latency under high load
+- **Cache Hit Rate**: Cached input tokens divided by total observed input tokens
 
 Retry-inclusive metrics such as `attempt_tokens` and `attempt_tpm` estimate observable retry pressure: every attempt counts its input tokens, failed retry attempts do not infer hidden output tokens, and a successful response contributes output tokens once.
+
+Cache metrics are reported when the upstream API includes cache usage in its `usage` payload. The loader recognizes OpenAI-style `prompt_tokens_details.cached_tokens`, Anthropic `cache_read_input_tokens` and `cache_creation_input_tokens`, Gemini `cachedContentTokenCount`, and gateway-style `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. If the upstream API does not return cache usage fields, cache hit rate is reported as `0` rather than inferred from response content.
 
 ## Web Console Quick Start
 

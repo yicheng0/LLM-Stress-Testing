@@ -190,6 +190,7 @@ import { Clock } from '@element-plus/icons-vue'
 import EmptyState from '../components/EmptyState.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { getReport } from '../api/client'
+import { isTerminalTaskStatus } from '../utils/taskStatus'
 
 const route = useRoute()
 const router = useRouter()
@@ -223,7 +224,7 @@ const batchSummary = computed(() => {
   return {
     name: first.batchName || '批量渠道诊断',
     total: caseChannelItems.value.length,
-    completed: reports.value.filter((report) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(report.task_status)).length,
+    completed: reports.value.filter((report) => isTerminalTaskStatus(report.task_status)).length,
     caseCount: new Set(caseChannelItems.value.map((item) => item.caseName)).size,
     channelCount: new Set(caseChannelItems.value.map((item) => item.channelName)).size
   }

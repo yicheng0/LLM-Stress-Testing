@@ -102,6 +102,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { CopyDocument, DataAnalysis, Delete, Monitor, MoreFilled, RefreshRight } from '@element-plus/icons-vue'
+import { isTerminalTaskStatus, taskStatusLabel, taskStatusTagType } from '../utils/taskStatus'
 
 const props = defineProps({
   items: {
@@ -117,28 +118,6 @@ const props = defineProps({
 const emit = defineEmits(['run', 'report', 'copy', 'delete', 'resume-matrix', 'selection-change'])
 const selectedMobileIds = ref([])
 
-const statusNames = {
-  queued: '排队',
-  running: '运行',
-  stopping: '停止中',
-  completed: '完成',
-  failed: '失败',
-  cancelled: '取消',
-  interrupted: '中断'
-}
-
-function statusText(status) {
-  return statusNames[status] || status
-}
-
-function statusType(status) {
-  if (status === 'completed') return 'success'
-  if (status === 'failed') return 'danger'
-  if (['stopping', 'cancelled', 'interrupted'].includes(status)) return 'warning'
-  if (status === 'running') return 'primary'
-  return 'info'
-}
-
 function healthStatusText(row) {
   if (hasAuthError(row)) return '认证失败'
   if (hasInvalidResponse(row)) return '响应异常'
@@ -146,7 +125,7 @@ function healthStatusText(row) {
   if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
     return '异常完成'
   }
-  return statusText(row.status)
+  return taskStatusLabel(row.status)
 }
 
 function healthStatusType(row) {
@@ -156,7 +135,7 @@ function healthStatusType(row) {
   if (row.status === 'completed' && Number(results.total_requests || 0) > 0 && Number(results.success_rate || 0) < 0.95) {
     return 'warning'
   }
-  return statusType(row.status)
+  return taskStatusTagType(row.status)
 }
 
 function hasAuthError(row) {
@@ -207,7 +186,7 @@ function handleCommand(command, row) {
 }
 
 function canResumeMatrix(row) {
-  return Boolean(row.matrix_mode && ['completed', 'failed', 'cancelled', 'interrupted'].includes(row.status))
+  return Boolean(row.matrix_mode && isTerminalTaskStatus(row.status))
 }
 
 function isMobileSelected(row) {

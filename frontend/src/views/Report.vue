@@ -359,6 +359,9 @@
               <template #default="{ row }">{{ seconds(row.ttft_sec) }}</template>
             </el-table-column>
             <el-table-column prop="total_tokens" label="Token" width="110" />
+            <el-table-column prop="cached_input_tokens" label="缓存命中" width="110" />
+            <el-table-column prop="cache_creation_input_tokens" label="缓存创建" width="110" />
+            <el-table-column prop="cache_inclusive_total_tokens" label="含缓存 Token" width="130" />
             <el-table-column prop="error_type" label="错误类型" min-width="130" />
             <el-table-column prop="error_message" label="错误信息" min-width="220" show-overflow-tooltip />
           </el-table>
@@ -409,6 +412,7 @@ import MetricsTable from '../components/MetricsTable.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { deleteTest, getDetails, getReport, resumeMatrixTest } from '../api/client'
 import { openReportDownload } from '../composables/useReportDownload'
+import { isTerminalTaskStatus } from '../utils/taskStatus'
 
 const props = defineProps({
   id: {
@@ -450,7 +454,7 @@ const results = computed(() => summary.value?.results || {})
 const charts = computed(() => report.value?.charts || {})
 const isMatrix = computed(() => Boolean(summary.value?.matrix))
 const canResumeMatrix = computed(() => (
-  isMatrix.value && ['completed', 'failed', 'cancelled', 'interrupted'].includes(report.value?.task_status)
+  isMatrix.value && isTerminalTaskStatus(report.value?.task_status)
 ))
 const isCustomPrompt = computed(() => config.value.prompt_source === 'custom' || summaryConfig.value.prompt_source === 'custom')
 const promptSourceText = computed(() => {

@@ -75,6 +75,7 @@
                 <th>TPS</th>
                 <th>TPM</th>
                 <th>含缓存 TPM</th>
+                <th>缓存命中率</th>
                 <th>成功率</th>
                 <th>TTFT Avg</th>
                 <th>TTFT P50</th>
@@ -92,6 +93,7 @@
                 <td>{{ number(point.total_tps) }}</td>
                 <td>{{ number(point.total_tpm) }}</td>
                 <td>{{ number(metricValue(point, 'cache_inclusive_tpm')) }}</td>
+                <td>{{ percent(point.cache_hit_rate) }}</td>
                 <td>{{ percent(point.success_rate) }}</td>
                 <td>{{ seconds(point.ttft_avg) }}</td>
                 <td>{{ seconds(point.ttft_p50) }}</td>
@@ -217,11 +219,13 @@ const matrixPoints = computed(() => charts.value.matrix_points || [])
 const effectiveDuration = computed(() => config.value.matrix_mode ? config.value.matrix_duration_sec : config.value.duration_sec)
 const cacheInclusiveTpm = computed(() => metricWithFallback(results.value, 'cache_inclusive_tpm', 'total_tpm'))
 const cacheHitTpm = computed(() => Number(results.value.cache_hit_tpm || 0))
+const cacheHitRate = computed(() => Number(results.value.cache_hit_rate || 0))
 
 const metricItems = computed(() => {
   if (isMatrix.value) {
     const bestTpm = Math.max(0, ...matrixPoints.value.map((item) => Number(item.total_tpm || 0)))
     const bestCacheInclusiveTpm = Math.max(0, ...matrixPoints.value.map((item) => metricValue(item, 'cache_inclusive_tpm')))
+    const bestCacheHitRate = Math.max(0, ...matrixPoints.value.map((item) => Number(item.cache_hit_rate || 0)))
     const bestRpm = Math.max(0, ...matrixPoints.value.map((item) => Number(item.rpm || 0)))
     const successRates = matrixPoints.value.map((item) => Number(item.success_rate)).filter(Number.isFinite)
     const avgSuccess = successRates.length ? successRates.reduce((sum, item) => sum + item, 0) / successRates.length : null
@@ -229,6 +233,7 @@ const metricItems = computed(() => {
       { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token x 并发' },
       { label: '最高 TPM', value: number(bestTpm), sub: '矩阵峰值' },
       { label: '最高含缓存 TPM', value: number(bestCacheInclusiveTpm), sub: '矩阵峰值' },
+      { label: '最高缓存命中率', value: percent(bestCacheHitRate), sub: 'Token 命中率' },
       { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值' },
       { label: '平均成功率', value: percent(avgSuccess), sub: '全部测试点' }
     ]
@@ -238,7 +243,8 @@ const metricItems = computed(() => {
     { label: '成功率', value: percent(results.value.success_rate), sub: `失败 ${number(results.value.failed_requests)}` },
     { label: 'RPM', value: number(results.value.rpm), sub: `TPS ${number(results.value.total_tps)}` },
     { label: 'Total TPM', value: number(results.value.total_tpm), sub: `QPS ${number(results.value.qps)}` },
-    { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}` }
+    { label: '缓存命中率', value: percent(cacheHitRate.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}` },
+    { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `含缓存总 Token ${number(results.value.total_cache_inclusive_tokens)}` }
   ]
 })
 
