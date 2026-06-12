@@ -25,7 +25,7 @@ from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_ope
 from backend.app.models.database import TestResult as DbTestResult
 from backend.app.models.database import TestTask as DbTestTask
 from backend.app.models.schemas import CustomCaseBatchCase, CustomCaseBatchChannel, CustomCaseBatchRequest, TestCreate
-from loadtest.chart_data import build_single_chart_data
+from loadtest.chart_data import build_matrix_chart_data, build_single_chart_data
 from loadtest.config import LoadTestConfig
 from loadtest.executor import RequestExecutor
 from loadtest.metrics import percentile, percentile_metrics
@@ -242,8 +242,12 @@ class MetricsAccumulatorTest(unittest.TestCase):
         html = render_html_report(summary, results)
 
         self.assertIn("含缓存总计", markdown)
+        self.assertIn("缓存命中率", markdown)
+        self.assertIn("33.33%", markdown)
         self.assertIn("1,620", markdown)
         self.assertIn("含缓存 TPM", html)
+        self.assertIn("缓存命中率", html)
+        self.assertIn("33.33%", html)
         self.assertIn("1,620", html)
 
     def test_matrix_exports_include_cache_inclusive_tpm(self):
@@ -266,6 +270,10 @@ class MetricsAccumulatorTest(unittest.TestCase):
                 "total_tpm": 7200,
                 "cache_inclusive_tpm": 9600,
                 "cache_hit_tpm": 2400,
+                "cache_hit_rate": 0.25,
+                "total_cached_input_tokens": 400,
+                "total_cache_creation_input_tokens": 50,
+                "total_cache_inclusive_tokens": 1600,
                 "input_tps": 100,
                 "output_tps": 20,
                 "total_tps": 120,
@@ -287,9 +295,18 @@ class MetricsAccumulatorTest(unittest.TestCase):
         csv = generate_matrix_csv([point])
 
         self.assertIn("含缓存 TPM 矩阵", markdown)
+        self.assertIn("缓存命中率矩阵", markdown)
+        self.assertIn("25.00", markdown)
         self.assertIn("9,600", markdown)
-        self.assertIn("cache_inclusive_tpm,cache_hit_tpm", csv)
-        self.assertIn(",7200,9600.0,2400,", csv)
+        self.assertIn("cache_inclusive_tpm,cache_hit_tpm,cache_hit_rate,total_cached_input_tokens,total_cache_creation_input_tokens,total_cache_inclusive_tokens", csv)
+        self.assertIn(",7200,9600.0,2400,0.25,400,50,1600,", csv)
+
+        charts = build_matrix_chart_data([point])
+        chart_point = charts["matrix_points"][0]
+        self.assertEqual(chart_point["cache_inclusive_tpm"], 9600)
+        self.assertEqual(chart_point["cache_hit_tpm"], 2400)
+        self.assertEqual(chart_point["cache_hit_rate"], 0.25)
+        self.assertEqual(chart_point["total_cached_input_tokens"], 400)
 
     def test_retry_metrics_inclusive_for_failed_results(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)
@@ -1217,7 +1234,37 @@ class LoadTestRunnerStopTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(started.is_set())
         self.assertTrue(cancelled.is_set())
-        self.assertTrue(stop_event.is_set())
+        self.assertFalse(stop_event.is_set())
+
+    async def test_run_clears_deadline_after_natural_completion(self):
+        runner = LoadTestRunner({
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "model": "gpt-5.5",
+            "concurrency": 1,
+            "duration_sec": 1,
+            "input_tokens": 1,
+            "warmup_requests": 0,
+            "enable_stream": False,
+            "timeout_sec": 60,
+        })
+        runner.stop_event = asyncio.Event()
+        request_count = 0
+
+        async def fake_send_one(session, request_id):
+            nonlocal request_count
+            request_count += 1
+            await asyncio.sleep(0.02)
+            return result(request_id=request_id)
+
+        runner.send_one = fake_send_one
+
+        summary = await runner.run()
+
+        self.assertGreater(request_count, 0)
+        self.assertGreater(summary["results"]["total_requests"], 0)
+        self.assertEqual(runner.stop_at, 0.0)
+        self.assertFalse(runner.stop_event.is_set())
 
     async def test_progress_includes_retry_metrics(self):
         runner = LoadTestRunner({

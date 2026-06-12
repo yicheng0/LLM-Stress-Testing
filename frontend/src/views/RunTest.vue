@@ -163,7 +163,7 @@ const metricItems = computed(() => [
   {
     label: '含缓存 TPM',
     value: formatNumber(progress.value?.current_cache_inclusive_tpm),
-    sub: `缓存命中 ${formatNumber(progress.value?.current_cache_hit_tpm)}`,
+    sub: `命中率 ${formatPercent(progress.value?.current_cache_hit_rate)} / 命中 TPM ${formatNumber(progress.value?.current_cache_hit_tpm)}`,
     color: '#0f766e'
   },
   {

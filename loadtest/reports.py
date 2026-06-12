@@ -18,6 +18,10 @@ def _cache_inclusive_tps(res: Dict[str, Any]) -> float:
     return _cache_inclusive_tpm(res) / 60
 
 
+def _cache_hit_rate_percent(res: Dict[str, Any]) -> float:
+    return float(res.get("cache_hit_rate") or 0) * 100
+
+
 def render_markdown_report(summary: Dict[str, Any]) -> str:
     cfg = summary["config"]
     res = summary["results"]
@@ -101,7 +105,17 @@ def render_markdown_report(summary: Dict[str, Any]) -> str:
 | 总计 | {res['total_tpm']:,.0f} | {res['total_tps']:,.2f} |
 | 含缓存总计 | {_cache_inclusive_tpm(res):,.0f} | {_cache_inclusive_tps(res):,.2f} |
 
-### 3.3 延迟分布（秒）
+### 3.3 缓存命中指标
+| 指标 | 数值 |
+|------|------|
+| 缓存命中率 | {_cache_hit_rate_percent(res):.2f}% |
+| 缓存命中 Token | {res.get('total_cached_input_tokens') or 0:,} |
+| 缓存创建 Token | {res.get('total_cache_creation_input_tokens') or 0:,} |
+| 含缓存总 Token | {res.get('total_cache_inclusive_tokens') or res.get('total_tokens') or 0:,} |
+| 缓存命中 TPM | {res.get('cache_hit_tpm') or 0:,.0f} |
+| 含缓存 TPM | {_cache_inclusive_tpm(res):,.0f} |
+
+### 3.4 延迟分布（秒）
 | 指标 | 平均值 | P50 | P90 | P95 | P99 |
 |------|--------|-----|-----|-----|-----|
 | 总延迟 | {res['latency_sec_avg'] or 'N/A'} | {res['latency_sec_p50'] or 'N/A'} | {res['latency_sec_p90'] or 'N/A'} | {res['latency_sec_p95'] or 'N/A'} | {res['latency_sec_p99'] or 'N/A'} |
@@ -223,6 +237,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
     error_counts = res["error_counts"]
     cache_inclusive_tpm = _cache_inclusive_tpm(res)
     cache_hit_tpm = float(res.get("cache_hit_tpm") or 0)
+    cache_hit_rate = _cache_hit_rate_percent(res)
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -258,7 +273,7 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="text-sm text-gray-600 mb-1">含缓存 TPM</div>
                 <div class="text-3xl font-bold text-indigo-600">{cache_inclusive_tpm:,.0f}</div>
-                <div class="text-xs text-gray-500 mt-1">缓存命中 TPM: {cache_hit_tpm:,.1f}</div>
+                <div class="text-xs text-gray-500 mt-1">命中率: {cache_hit_rate:.2f}% / 命中 TPM: {cache_hit_tpm:,.1f}</div>
             </div>
             <div class="bg-white rounded-lg shadow p-6">
                 <div class="text-sm text-gray-600 mb-1">延迟 P95</div>
@@ -329,6 +344,28 @@ def render_html_report(summary: Dict[str, Any], details: List[RequestResult]) ->
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.get('decode_sec_p95') or 'N/A'}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.get('decode_sec_p99') or 'N/A'}</td>
                         </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <h2 class="text-xl font-semibold mb-4">缓存命中统计</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">指标</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">数值</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">缓存命中率</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cache_hit_rate:.2f}%</td></tr>
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">缓存命中 Token</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.get('total_cached_input_tokens') or 0:,}</td></tr>
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">缓存创建 Token</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.get('total_cache_creation_input_tokens') or 0:,}</td></tr>
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">含缓存总 Token</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{res.get('total_cache_inclusive_tokens') or res.get('total_tokens') or 0:,}</td></tr>
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">缓存命中 TPM</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cache_hit_tpm:,.1f}</td></tr>
+                        <tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">含缓存 TPM</td><td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cache_inclusive_tpm:,.1f}</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -451,9 +488,10 @@ def render_matrix_report(results_matrix: list[Dict[str, Any]]) -> str:
         ("2.1 吞吐量矩阵（RPM）", lambda result: f"{result['results']['rpm']:.1f}"),
         ("2.2 Total TPM 矩阵", lambda result: f"{result['results']['total_tpm']:,.0f}"),
         ("2.3 含缓存 TPM 矩阵", lambda result: f"{_cache_inclusive_tpm(result['results']):,.0f}"),
-        ("2.4 TTFT P95 矩阵（秒）", lambda result: f"{result['results'].get('ttft_sec_p95'):.2f}" if result['results'].get('ttft_sec_p95') else "N/A"),
-        ("2.5 总延迟 P95 矩阵（秒）", lambda result: f"{result['results'].get('latency_sec_p95'):.2f}" if result['results'].get('latency_sec_p95') else "N/A"),
-        ("2.6 成功率矩阵（%）", lambda result: f"{result['results']['success_rate'] * 100:.2f}"),
+        ("2.4 缓存命中率矩阵（%）", lambda result: f"{_cache_hit_rate_percent(result['results']):.2f}"),
+        ("2.5 TTFT P95 矩阵（秒）", lambda result: f"{result['results'].get('ttft_sec_p95'):.2f}" if result['results'].get('ttft_sec_p95') else "N/A"),
+        ("2.6 总延迟 P95 矩阵（秒）", lambda result: f"{result['results'].get('latency_sec_p95'):.2f}" if result['results'].get('latency_sec_p95') else "N/A"),
+        ("2.7 成功率矩阵（%）", lambda result: f"{result['results']['success_rate'] * 100:.2f}"),
     ]
     for title, formatter in matrix_specs:
         report += f"\n### {title}\n\n| 输入 Tokens \\ 并发 |"
@@ -490,7 +528,8 @@ def render_matrix_report(results_matrix: list[Dict[str, Any]]) -> str:
 
 def generate_matrix_csv(results_matrix: list[Dict[str, Any]]) -> str:
     csv_lines = [
-        "input_tokens,concurrency,rpm,qps,input_tpm,output_tpm,total_tpm,cache_inclusive_tpm,cache_hit_tpm,input_tps,output_tps,total_tps,"
+        "input_tokens,concurrency,rpm,qps,input_tpm,output_tpm,total_tpm,cache_inclusive_tpm,cache_hit_tpm,cache_hit_rate,"
+        "total_cached_input_tokens,total_cache_creation_input_tokens,total_cache_inclusive_tokens,input_tps,output_tps,total_tps,"
         "success_rate,latency_avg,latency_p50,latency_p95,latency_p99,"
         "ttft_avg,ttft_p50,ttft_p95,ttft_p99,decode_avg,decode_p95"
     ]
@@ -500,7 +539,8 @@ def generate_matrix_csv(results_matrix: list[Dict[str, Any]]) -> str:
         csv_lines.append(
             f"{matrix_cfg['input_tokens']},{matrix_cfg['concurrency']},"
             f"{res['rpm']},{res['qps']},"
-            f"{res['input_tpm']},{res['output_tpm']},{res['total_tpm']},{_cache_inclusive_tpm(res)},{res.get('cache_hit_tpm') or 0},"
+            f"{res['input_tpm']},{res['output_tpm']},{res['total_tpm']},{_cache_inclusive_tpm(res)},{res.get('cache_hit_tpm') or 0},{res.get('cache_hit_rate') or 0},"
+            f"{res.get('total_cached_input_tokens') or 0},{res.get('total_cache_creation_input_tokens') or 0},{res.get('total_cache_inclusive_tokens') or 0},"
             f"{res['input_tps']},{res['output_tps']},{res['total_tps']},"
             f"{res['success_rate']},"
             f"{res.get('latency_sec_avg') or ''},"

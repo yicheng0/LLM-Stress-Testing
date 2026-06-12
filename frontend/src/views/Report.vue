@@ -224,6 +224,9 @@
             <el-table-column label="含缓存 TPM">
               <template #default="{ row }">{{ number(metricValue(row, 'cache_inclusive_tpm')) }}</template>
             </el-table-column>
+            <el-table-column label="缓存命中率">
+              <template #default="{ row }">{{ percent(row.cache_hit_rate) }}</template>
+            </el-table-column>
             <el-table-column label="成功率">
               <template #default="{ row }">{{ percent(row.success_rate) }}</template>
             </el-table-column>
@@ -429,6 +432,7 @@ const matrixHeatmapMetric = ref('total_tpm')
 const matrixHeatmapMetrics = [
   { field: 'total_tpm', label: 'TPM', kind: 'throughput' },
   { field: 'cache_inclusive_tpm', label: '含缓存 TPM', kind: 'throughput' },
+  { field: 'cache_hit_rate', label: '缓存命中率', kind: 'ratio' },
   { field: 'rpm', label: 'RPM', kind: 'throughput' },
   { field: 'total_tps', label: 'TPS', kind: 'throughput' },
   { field: 'ttft_avg', label: 'TTFT Average', kind: 'latency' },
@@ -459,6 +463,7 @@ const expectedMetrics = computed(() => config.value.expected_metrics || summary.
 const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMetrics.value?.expected_rpm || expectedMetrics.value?.expected_tpm))
 const cacheInclusiveTpm = computed(() => metricWithFallback(results.value, 'cache_inclusive_tpm', 'total_tpm'))
 const cacheHitTpm = computed(() => Number(results.value.cache_hit_tpm || 0))
+const cacheHitRate = computed(() => Number(results.value.cache_hit_rate || 0))
 const resultErrorCounts = computed(() => {
   if (!isMatrix.value) return results.value.error_counts || {}
   const merged = {}
@@ -551,7 +556,7 @@ const capacityCards = computed(() => {
       { label: '推荐并发', value: number(point?.concurrency), description: `输入 Token 目标 ${number(point?.input_tokens)}`, type: capacityRecommendation.value.type },
       { label: '推荐 RPM', value: number(point?.rpm), description: '优先选择稳定点，不只看峰值', type: 'ok' },
       { label: '推荐 TPM', value: number(point?.total_tpm), description: `成功率 ${percent(point?.success_rate)}`, type: 'ok' },
-      { label: '尾延迟 P95', value: seconds(point?.latency_p95), description: '作为容量口径的延迟参考', type: Number(point?.latency_p95 || 0) >= 10 ? 'warning' : 'ok' }
+      { label: '缓存命中率', value: percent(point?.cache_hit_rate), description: `命中 TPM ${number(point?.cache_hit_tpm)}`, type: 'ok' }
     ]
   }
   return [
@@ -574,7 +579,8 @@ const metricItems = computed(() => [
   { label: '成功率', value: percent(results.value.success_rate), sub: `失败 ${number(results.value.failed_requests)}`, color: '#16a34a' },
   { label: 'RPM', value: number(results.value.rpm), sub: `QPS ${number(results.value.qps)}`, color: '#f97316' },
   { label: 'Total TPM', value: number(results.value.total_tpm), sub: `TPS ${number(results.value.total_tps)}`, color: '#334155' },
-  { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}`, color: '#7c3aed' }
+  { label: '缓存命中率', value: percent(cacheHitRate.value), sub: `缓存命中 TPM ${number(cacheHitTpm.value)}`, color: '#7c3aed' },
+  { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `含缓存总 Token ${number(results.value.total_cache_inclusive_tokens)}`, color: '#0f766e' }
 ])
 const securityAudit = computed(() => {
   const serialized = JSON.stringify({
@@ -636,6 +642,7 @@ const customerSummaryLines = computed(() => {
       `测试目的：评估 ${config.value.model || '-'} 在不同输入 Token 目标和并发组合下的容量边界。`,
       `测试配置：矩阵测试共 ${number(summary.value.test_points)} 个测试点，流式模式${config.value.enable_stream ? '开启' : '关闭'}。`,
       `核心结果：推荐稳定点为 ${number(point?.input_tokens)} 输入 Token 目标 / ${number(point?.concurrency)} 并发，约 ${number(point?.rpm)} RPM / ${number(point?.total_tpm)} TPM。`,
+      `缓存结果：推荐点缓存命中率 ${percent(point?.cache_hit_rate)}，缓存命中 TPM ${number(point?.cache_hit_tpm)}。`,
       `瓶颈判断：${capacityRecommendation.value.title}。`,
       `建议动作：以稳定点作为基线，继续围绕更高并发或更长上下文做小步复测。`,
       `风险提示：结果仅代表本次网络、账号配额和模型版本条件下的观测值。`
@@ -645,6 +652,7 @@ const customerSummaryLines = computed(() => {
     `测试目的：评估 ${config.value.model || '-'} 在 ${number(config.value.concurrency)} 并发、${number(config.value.input_tokens)} 输入 Token 目标下的吞吐和延迟表现。`,
     `测试配置：持续 ${number(effectiveDuration.value)} 秒，流式模式${config.value.enable_stream ? '开启' : '关闭'}，最大输出 ${number(config.value.max_output_tokens)} Token。`,
     `核心结果：成功率 ${percent(results.value.success_rate)}，实测 ${number(results.value.rpm)} RPM / ${number(results.value.total_tpm)} TPM，P95 延迟 ${seconds(results.value.latency_sec_p95)}。`,
+    `缓存结果：缓存命中率 ${percent(cacheHitRate.value)}，缓存命中 TPM ${number(cacheHitTpm.value)}，含缓存 TPM ${number(cacheInclusiveTpm.value)}。`,
     `瓶颈判断：${bottleneckText.value}；${capacityRecommendation.value.title}。`,
     `建议动作：保守容量可先按 ${number(safeRpm.value)} RPM / ${number(safeTpm.value)} TPM 作为起点。`,
     `风险提示：真实线上容量会受限流、网络、输出长度和模型版本变化影响。`
@@ -775,6 +783,12 @@ const diagnosticCards = computed(() => {
       type: 'ok'
     },
     {
+      label: '缓存命中',
+      value: percent(cacheHitRate.value),
+      description: `命中 ${number(results.value.total_cached_input_tokens)} Token / TPM ${number(cacheHitTpm.value)}`,
+      type: Number(cacheHitRate.value || 0) > 0 ? 'ok' : 'warning'
+    },
+    {
       label: '延迟瓶颈',
       value: bottleneckText.value,
       description: `Avg ${seconds(results.value.latency_sec_avg)} / P95 ${seconds(results.value.latency_sec_p95)}`,
@@ -798,12 +812,13 @@ const diagnosticCards = computed(() => {
 const matrixMetricItems = computed(() => {
   const bestTpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.total_tpm || 0)))
   const bestCacheInclusiveTpm = Math.max(0, ...matrixPoints.value.map(item => metricWithFallback(item, 'cache_inclusive_tpm', 'total_tpm')))
+  const bestCacheHitRate = Math.max(0, ...matrixPoints.value.map(item => Number(item.cache_hit_rate || 0)))
   const bestRpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.rpm || 0)))
   return [
     { label: '测试点', value: number(summary.value.test_points), sub: '输入 Token 目标 x 并发', color: '#2563eb' },
     { label: '最高 TPM', value: number(bestTpm), sub: '矩阵峰值', color: '#f97316' },
     { label: '最高含缓存 TPM', value: number(bestCacheInclusiveTpm), sub: '矩阵峰值', color: '#7c3aed' },
-    { label: '最高 RPM', value: number(bestRpm), sub: '矩阵峰值', color: '#16a34a' }
+    { label: '最高缓存命中率', value: percent(bestCacheHitRate), sub: `最高 RPM ${number(bestRpm)}`, color: '#16a34a' }
   ]
 })
 
@@ -834,7 +849,7 @@ const conclusionItems = computed(() => {
     return [
       { label: '最佳吞吐点', value: bestTpmPoint ? `${number(bestTpmPoint.input_tokens)} / ${number(bestTpmPoint.concurrency)}` : '-', hint: `TPM ${number(bestTpmPoint?.total_tpm)}`, type: 'ok' },
       { label: '最低 P95 点', value: bestLatencyPoint ? `${number(bestLatencyPoint.input_tokens)} / ${number(bestLatencyPoint.concurrency)}` : '-', hint: seconds(bestLatencyPoint?.latency_p95), type: 'ok' },
-      { label: '测试点数', value: number(summary.value.test_points), hint: '矩阵组合数量', type: 'ok' },
+      { label: '缓存命中率', value: percent(bestTpmPoint?.cache_hit_rate), hint: `命中 TPM ${number(bestTpmPoint?.cache_hit_tpm)}`, type: 'ok' },
       { label: '结论', value: reportConclusion.value.label, hint: '综合成功率和尾延迟', type: reportConclusion.value.type }
     ]
   }
@@ -842,7 +857,7 @@ const conclusionItems = computed(() => {
     { label: '稳定性', value: percent(results.value.success_rate), hint: `失败 ${number(results.value.failed_requests)}`, type: Number(results.value.success_rate || 0) >= 0.99 ? 'ok' : 'warning' },
     { label: '尾延迟', value: seconds(results.value.latency_sec_p95), hint: `P99 ${seconds(results.value.latency_sec_p99)}`, type: Number(results.value.latency_sec_p95 || 0) >= 10 ? 'warning' : 'ok' },
     { label: '吞吐', value: number(results.value.total_tpm), hint: `RPM ${number(results.value.rpm)}`, type: 'ok' },
-    { label: '瓶颈判断', value: bottleneckText.value, hint: '由 TTFT/Decode 占比估算', type: 'ok' }
+    { label: '缓存命中率', value: percent(cacheHitRate.value), hint: `命中 ${number(results.value.total_cached_input_tokens)} Token`, type: Number(cacheHitRate.value || 0) > 0 ? 'ok' : 'warning' }
   ]
 })
 const bottleneckText = computed(() => {
@@ -931,9 +946,12 @@ const throughputRows = computed(() => [
   { name: 'Total TPM', value: number(results.value.total_tpm) },
   { name: '含缓存 TPM', value: number(cacheInclusiveTpm.value) },
   { name: '缓存命中 TPM', value: number(cacheHitTpm.value) },
+  { name: '缓存命中率', value: percent(cacheHitRate.value) },
   { name: 'Input TPS', value: number(results.value.input_tps) },
   { name: 'Output TPS', value: number(results.value.output_tps) },
   { name: 'Total TPS', value: number(results.value.total_tps) },
+  { name: '缓存命中 Token', value: number(results.value.total_cached_input_tokens) },
+  { name: '缓存创建 Token', value: number(results.value.total_cache_creation_input_tokens) },
   { name: '总输入 Token', value: number(results.value.total_input_tokens) },
   { name: '总输出 Token', value: number(results.value.total_output_tokens) }
 ])
@@ -1014,6 +1032,8 @@ const matrixHeatmapOption = computed(() => {
   })
   const colors = metric.kind === 'latency'
     ? ['#dcfce7', '#facc15', '#dc2626']
+    : metric.kind === 'ratio'
+      ? ['#f1f5f9', '#93c5fd', '#0f766e']
     : ['#eff6ff', '#93c5fd', '#16a34a']
 
   return {
@@ -1027,6 +1047,7 @@ const matrixHeatmapOption = computed(() => {
           `${metric.label}: ${formatMetricValue(value, metric.field)}`,
           `TPM: ${number(point.total_tpm)}`,
           `含缓存 TPM: ${number(metricValue(point, 'cache_inclusive_tpm'))}`,
+          `缓存命中率: ${percent(point.cache_hit_rate)}`,
           `RPM: ${number(point.rpm)}`,
           `TPS: ${number(point.total_tps)}`,
           `成功率: ${percent(point.success_rate)}`,
@@ -1176,6 +1197,7 @@ function uniqueSorted(values) {
 function formatMetricValue(value, field, compact = false) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return '-'
   if (field.startsWith('latency_') || field.startsWith('ttft_')) return seconds(value)
+  if (field === 'cache_hit_rate' || field === 'success_rate') return percent(value)
   if (compact) return compactNumber(value)
   return number(value)
 }

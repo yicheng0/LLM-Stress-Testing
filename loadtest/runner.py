@@ -138,7 +138,7 @@ class LoadTestRunner:
     def deadline_reached(self) -> bool:
         return bool(self.stop_at and time.time() >= self.stop_at)
 
-    async def _wait_with_stop(self, awaitable: Awaitable[T], *, set_stop_on_deadline: bool = False) -> tuple[bool, T | None]:
+    async def _wait_with_stop(self, awaitable: Awaitable[T]) -> tuple[bool, T | None]:
         task = asyncio.create_task(awaitable)
         wait_tasks: list[asyncio.Task[Any]] = [task]
         stop_task: asyncio.Task[Any] | None = None
@@ -156,8 +156,6 @@ class LoadTestRunner:
             if self.stop_at:
                 remaining = self.stop_at - time.time()
                 if remaining <= 0:
-                    if set_stop_on_deadline and self.stop_event is not None and not self.stop_event.is_set():
-                        self.stop_event.set()
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
@@ -170,9 +168,6 @@ class LoadTestRunner:
                 if task.cancelled():
                     return False, None
                 return True, await task
-
-            if deadline_task is not None and deadline_task in done and set_stop_on_deadline and self.stop_event is not None and not self.stop_event.is_set():
-                self.stop_event.set()
 
             task.cancel()
             with suppress(asyncio.CancelledError):
@@ -190,11 +185,11 @@ class LoadTestRunner:
     async def _sleep_or_stop(self, seconds: float) -> bool:
         if seconds <= 0:
             return True
-        completed, _ = await self._wait_with_stop(asyncio.sleep(seconds), set_stop_on_deadline=True)
+        completed, _ = await self._wait_with_stop(asyncio.sleep(seconds))
         return completed
 
     async def _request_or_stop(self, session, request_id: int) -> Optional[RequestResult]:
-        completed, result = await self._wait_with_stop(self.send_one(session, request_id), set_stop_on_deadline=True)
+        completed, result = await self._wait_with_stop(self.send_one(session, request_id))
         if not completed:
             return None
         return result
@@ -452,8 +447,20 @@ class LoadTestRunner:
                     await self.emit_log("error", f"req#{result.request_id} FAIL({result.error_type}) status={result.status} latency={result.latency_sec:.2f}s msg={error_msg}")
                 if total % 50 == 0:
                     avg_latency = statistics.mean(self._success_latency_window) if self._success_latency_window else 0
-                    print(f"  [{elapsed:>4}s] 已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s", flush=True)
-                    await self.emit_log("info", f"已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, 近10次平均延迟={avg_latency:.2f}s")
+                    current_cache_hit_rate = cache_hit_rate(
+                        self._success_cached_input_count,
+                        self.metrics_accumulator.total_cache_creation_input_tokens,
+                        self.metrics_accumulator.total_input_tokens,
+                    ) * 100
+                    current_cache_hit_tpm = self._success_cached_input_count * 60 / max(0.001, time.time() - (self.test_start_wall_time or time.time()))
+                    current_cache_inclusive_tpm = self._success_cache_inclusive_token_count * 60 / max(0.001, time.time() - (self.test_start_wall_time or time.time()))
+                    progress_text = (
+                        f"已完成={total}, 成功={success}, 成功率={current_success_rate:.1f}%, "
+                        f"缓存命中率={current_cache_hit_rate:.2f}%, 缓存命中TPM={current_cache_hit_tpm:.1f}, "
+                        f"含缓存TPM={current_cache_inclusive_tpm:.1f}, 近10次平均延迟={avg_latency:.2f}s"
+                    )
+                    print(f"  [{elapsed:>4}s] {progress_text}", flush=True)
+                    await self.emit_log("info", progress_text)
             if self.config.think_time_ms > 0:
                 if not await self._sleep_or_stop(self.config.think_time_ms / 1000.0):
                     break
@@ -495,6 +502,7 @@ class LoadTestRunner:
             await self.emit_progress(force=True)
             tasks = [asyncio.create_task(self.worker(i, session, semaphore)) for i in range(self.config.concurrency)]
             await asyncio.gather(*tasks)
+        self.stop_at = 0.0
         print("[*] 压测结束，正在汇总结果...", flush=True)
         self.phase = "completed"
         await self.emit_progress(force=True)
