@@ -97,6 +97,23 @@
         </div>
       </div>
 
+      <div class="cache-performance-panel" :class="cacheStatus.tone">
+        <div class="cache-performance-header">
+          <div>
+            <h3>缓存表现</h3>
+            <p>{{ cacheStatus.description }}</p>
+          </div>
+          <el-tag :type="cacheStatus.type" effect="plain">{{ cacheStatus.label }}</el-tag>
+        </div>
+        <div class="cache-metric-grid">
+          <div v-for="item in cacheMetricCards" :key="item.label" class="cache-metric-card">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <em>{{ item.sub }}</em>
+          </div>
+        </div>
+      </div>
+
       <div class="diagnostic-grid">
         <div v-for="item in diagnosticItems" :key="item.label" class="diagnostic-card" :class="item.type">
           <div class="diagnostic-label">{{ item.label }}</div>
@@ -243,6 +260,8 @@ const aggregate = computed(() => {
     cacheHitTpm: numeric(metrics.cache_hit_tpm),
     cacheInclusiveTpm: numeric(metrics.cache_inclusive_tpm),
     cachedInputTokens: numeric(metrics.cached_input_tokens),
+    cacheCreationInputTokens: numeric(metrics.cache_creation_input_tokens),
+    cacheObservedInputTokens: numeric(metrics.cache_observed_input_tokens),
     cacheHitRate: numeric(metrics.cache_hit_rate, null),
     attemptRpm: numeric(metrics.attempt_rpm),
     attemptTpm: numeric(metrics.attempt_tpm),
@@ -302,6 +321,54 @@ const diagnosisMeta = computed(() => {
   }
   return meta[diagnostics.value.overall_status] || meta.idle
 })
+const activeCacheTasks = computed(() => activeTasks.value.filter((item) => item.cache_test_enabled))
+const hasCacheUsage = computed(() => (
+  aggregate.value.cachedInputTokens > 0 ||
+  aggregate.value.cacheCreationInputTokens > 0 ||
+  aggregate.value.cacheObservedInputTokens > 0 ||
+  aggregate.value.cacheHitTpm > 0 ||
+  aggregate.value.cacheInclusiveTpm > aggregate.value.tpm
+))
+const cacheStatus = computed(() => {
+  if (!hasActiveTasks.value) {
+    return {
+      label: '等待实时样本',
+      description: '暂无运行任务，启动开启缓存的压测后会持续汇总缓存命中和创建 Token。',
+      type: 'info',
+      tone: 'idle'
+    }
+  }
+  if (!activeCacheTasks.value.length) {
+    return {
+      label: '未开启缓存测试',
+      description: '当前运行任务未启用缓存测试，缓存命中相关指标不会产生。',
+      type: 'info',
+      tone: 'idle'
+    }
+  }
+  if (!hasCacheUsage.value) {
+    return {
+      label: '等待缓存用量',
+      description: '缓存测试已开启，但上游暂未返回缓存用量，或当前阶段尚未命中缓存。',
+      type: 'warning',
+      tone: 'waiting'
+    }
+  }
+  if (aggregate.value.cachedInputTokens <= 0) {
+    return {
+      label: '暂未命中',
+      description: '已观测到缓存创建或含缓存吞吐，但命中 Token 仍为 0。',
+      type: 'warning',
+      tone: 'waiting'
+    }
+  }
+  return {
+    label: '已命中缓存',
+    description: `缓存命中率 ${percent(aggregate.value.cacheHitRate)}，含缓存 TPM ${number(aggregate.value.cacheInclusiveTpm)}。`,
+    type: 'success',
+    tone: 'active'
+  }
+})
 
 const metricCards = computed(() => [
   {
@@ -331,6 +398,33 @@ const metricCards = computed(() => [
     sub: hasActiveTasks.value ? `P95 ${seconds(aggregate.value.p95)} / 预期 ${seconds(aggregate.value.expectedLatency)}` : '等待实时样本',
     icon: DataAnalysis,
     tone: healthTone.value === 'danger' ? 'red' : 'orange'
+  }
+])
+const cacheMetricCards = computed(() => [
+  {
+    label: '缓存命中率',
+    value: hasActiveTasks.value ? percent(aggregate.value.cacheHitRate) : '-',
+    sub: aggregate.value.cacheObservedInputTokens ? `观测输入 ${number(aggregate.value.cacheObservedInputTokens)}` : cacheStatus.value.label
+  },
+  {
+    label: '缓存命中 TPM',
+    value: hasActiveTasks.value ? number(aggregate.value.cacheHitTpm) : '-',
+    sub: `含缓存 TPM ${hasActiveTasks.value ? number(aggregate.value.cacheInclusiveTpm) : '-'}`
+  },
+  {
+    label: '含缓存 TPM',
+    value: hasActiveTasks.value ? number(aggregate.value.cacheInclusiveTpm) : '-',
+    sub: `有效 TPM ${hasActiveTasks.value ? number(aggregate.value.tpm) : '-'}`
+  },
+  {
+    label: '缓存命中 Token',
+    value: hasActiveTasks.value ? number(aggregate.value.cachedInputTokens) : '-',
+    sub: aggregate.value.cachedInputTokens > 0 ? '上游返回 cached input' : cacheStatus.value.label
+  },
+  {
+    label: '缓存创建 Token',
+    value: hasActiveTasks.value ? number(aggregate.value.cacheCreationInputTokens) : '-',
+    sub: aggregate.value.cacheCreationInputTokens > 0 ? '用于后续命中基线' : cacheStatus.value.label
   }
 ])
 const diagnosticItems = computed(() => [
@@ -414,9 +508,12 @@ async function renderCharts() {
 
 function trendOption() {
   return {
-    color: ['#2563eb', '#8b5cf6', '#0f766e', '#f97316', '#0f172a', '#94a3b8', '#f59e0b'],
+    color: ['#2563eb', '#334155', '#0f766e', '#f97316', '#111827', '#64748b', '#f59e0b'],
     tooltip: { trigger: 'axis' },
-    legend: { top: 0 },
+    legend: {
+      top: 0,
+      textStyle: { color: '#374151', fontWeight: 600 }
+    },
     grid: { left: 50, right: 50, top: 42, bottom: 34 },
     xAxis: { type: 'category', data: samples.value.map((item) => item.time), boundaryGap: false },
     yAxis: [
@@ -426,7 +523,7 @@ function trendOption() {
     series: [
       { name: '有效 RPM', type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.12 }, data: samples.value.map((item) => item.rpm) },
       { name: '有效 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, areaStyle: { opacity: 0.1 }, data: samples.value.map((item) => item.tpm) },
-      { name: '含缓存 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.cacheInclusiveTpm) },
+      { name: '含缓存 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, lineStyle: { width: 3, type: 'solid', color: '#0f766e' }, itemStyle: { color: '#0f766e' }, data: samples.value.map((item) => item.cacheInclusiveTpm) },
       { name: '含重试 RPM', type: 'line', smooth: true, showSymbol: false, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.attemptRpm) },
       { name: '含重试 TPM', type: 'line', smooth: true, showSymbol: false, yAxisIndex: 1, lineStyle: { width: 2, type: 'solid' }, data: samples.value.map((item) => item.attemptTpm) },
       { name: '目标 RPM', type: 'line', showSymbol: false, lineStyle: { type: 'dashed' }, data: samples.value.map((item) => item.expectedRpm) },
@@ -1143,6 +1240,23 @@ onBeforeUnmount(() => {
   color: #cbd5e1;
 }
 
+.realtime-panel:fullscreen .cache-performance-panel,
+.realtime-panel:fullscreen .cache-metric-card {
+  border-color: rgba(20, 184, 166, 0.34);
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.realtime-panel:fullscreen .cache-performance-header h3,
+.realtime-panel:fullscreen .cache-metric-card strong {
+  color: #5eead4;
+}
+
+.realtime-panel:fullscreen .cache-performance-header p,
+.realtime-panel:fullscreen .cache-metric-card span,
+.realtime-panel:fullscreen .cache-metric-card em {
+  color: #cbd5e1;
+}
+
 .realtime-panel:fullscreen .section-body {
   background: transparent;
 }
@@ -1169,6 +1283,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1180px) {
   .live-card-grid,
+  .cache-metric-grid,
   .diagnostic-grid,
   .live-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1181,9 +1296,14 @@ onBeforeUnmount(() => {
 
 @media (max-width: 720px) {
   .live-card-grid,
+  .cache-metric-grid,
   .diagnostic-grid,
   .live-layout {
     grid-template-columns: 1fr;
+  }
+
+  .cache-performance-header {
+    flex-direction: column;
   }
 
   .diagnosis-summary {
@@ -1217,6 +1337,170 @@ onBeforeUnmount(() => {
 
   .activity-metrics span {
     align-items: flex-start;
+  }
+}
+
+.diagnosis-summary,
+.diagnostic-card,
+.chart-tile,
+.activity-tile {
+  border-color: #e5e7eb;
+  box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05);
+}
+
+.diagnosis-status {
+  background: #f2f3f5;
+  color: #111827;
+}
+
+.live-card {
+  border: 1px solid #e5e7eb;
+  background: #ffffff !important;
+  color: #111827;
+  box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05);
+}
+
+.live-card::after {
+  display: none;
+}
+
+.live-card.blue {
+  border-left: 4px solid #2563eb;
+}
+
+.live-card.green {
+  border-left: 4px solid #22c55e;
+}
+
+.live-card.purple,
+.live-card.neutral {
+  border-left: 4px solid #111827;
+}
+
+.live-card.orange {
+  border-left: 4px solid #f59e0b;
+}
+
+.live-card.red {
+  border-left: 4px solid #ef4444;
+}
+
+.live-card-icon {
+  background: #f2f3f5;
+  color: #111827;
+}
+
+.live-card-label,
+.live-card-sub {
+  color: #6b7280;
+  opacity: 1;
+}
+
+.live-card-value {
+  color: #111827;
+}
+
+.cache-performance-panel {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #0f766e;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05);
+}
+
+.cache-performance-panel.idle {
+  border-left-color: #64748b;
+}
+
+.cache-performance-panel.waiting {
+  border-left-color: #f59e0b;
+}
+
+.cache-performance-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.cache-performance-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.cache-performance-header p {
+  margin: 5px 0 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.cache-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cache-metric-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.cache-metric-card span,
+.cache-metric-card em {
+  display: block;
+  overflow: hidden;
+  color: #4b5563;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-metric-card strong {
+  display: block;
+  margin: 7px 0 5px;
+  overflow: hidden;
+  color: #0f766e;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 20px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-row {
+  border-color: #e5e7eb;
+  background: #ffffff;
+}
+
+.activity-row:hover {
+  border-color: #d1d5db;
+  background: #fafafa;
+}
+
+@media (max-width: 1180px) {
+  .cache-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .cache-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cache-performance-header {
+    flex-direction: column;
   }
 }
 </style>

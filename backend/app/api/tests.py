@@ -680,6 +680,8 @@ async def realtime_dashboard(
             "cache_hit_tpm": round(cache_hit_tpm, 4),
             "cache_inclusive_tpm": round(cache_inclusive_tpm, 4),
             "cached_input_tokens": round(cached_input_tokens, 4),
+            "cache_creation_input_tokens": round(cache_creation_input_tokens, 4),
+            "cache_observed_input_tokens": round(cache_hit_denominator, 4),
             "cache_hit_rate": round(cached_input_tokens / cache_hit_denominator, 4) if cache_hit_denominator > 0 else 0.0,
             "attempt_rpm": round(attempt_rpm, 4),
             "attempt_tpm": round(attempt_tpm, 4),

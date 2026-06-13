@@ -1,12 +1,12 @@
 <template>
   <router-view v-if="isStandaloneLayout" />
   <el-container v-else class="app-shell">
-    <el-aside class="sidebar desktop-sidebar" width="236px">
+    <el-aside class="sidebar desktop-sidebar" width="216px">
       <div class="brand">
         <img class="brand-logo" src="https://wenwen-us.oss-us-west-1.aliyuncs.com/apipro_logo.png" alt="APIPro" />
         <div class="brand-copy">
-          <div class="brand-title">APIPro LLM Benchmark Studio</div>
-          <div class="brand-subtitle">Performance Intelligence Console</div>
+          <div class="brand-title">APIPro</div>
+          <div class="brand-subtitle">LLM Benchmark</div>
         </div>
       </div>
 
@@ -50,7 +50,9 @@
         <div class="topbar-actions">
           <el-tag v-if="auth.user" effect="plain">{{ auth.user.username }} · {{ auth.user.role }}</el-tag>
           <el-button :icon="Refresh" @click="reloadRoute">刷新</el-button>
-          <el-button @click="logout">退出</el-button>
+          <el-button class="user-avatar-button" circle aria-label="退出登录" @click="logout">
+            {{ userInitial }}
+          </el-button>
         </div>
       </el-header>
 
@@ -76,8 +78,8 @@
         <div class="brand">
           <img class="brand-logo" src="https://wenwen-us.oss-us-west-1.aliyuncs.com/apipro_logo.png" alt="APIPro" />
           <div class="brand-copy">
-            <div class="brand-title">APIPro LLM Benchmark Studio</div>
-            <div class="brand-subtitle">Performance Intelligence Console</div>
+            <div class="brand-title">APIPro</div>
+            <div class="brand-subtitle">LLM Benchmark</div>
           </div>
         </div>
 
@@ -119,6 +121,7 @@ const visibleNavItems = computed(() => {
   if (auth.role !== 'guest') return navItems
   return navItems.filter((item) => item.index !== '/tests/custom-case')
 })
+const userInitial = computed(() => (auth.user?.username || 'U').slice(0, 1).toUpperCase())
 
 const activePath = computed(() => {
   if (route.path.startsWith('/history')) return '/history'

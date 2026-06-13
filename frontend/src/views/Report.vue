@@ -194,6 +194,26 @@
 
     <template v-if="isMatrix">
       <MetricCards :items="matrixMetricItems" />
+      <div class="section cache-report-section">
+        <div class="section-header">
+          <h2 class="section-title">缓存表现</h2>
+          <el-tag :type="reportCacheStatus.type" effect="plain">{{ reportCacheStatus.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <p class="cache-report-note">{{ reportCacheStatus.description }}</p>
+          <div class="cache-report-grid">
+            <div v-for="item in reportCacheCards" :key="item.label" class="cache-report-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.sub }}</em>
+            </div>
+          </div>
+          <div class="cache-report-actions">
+            <el-button size="small" @click="matrixHeatmapMetric = 'cache_inclusive_tpm'">查看含缓存 TPM 热力图</el-button>
+            <el-button size="small" @click="matrixHeatmapMetric = 'cache_hit_rate'">查看缓存命中率热力图</el-button>
+          </div>
+        </div>
+      </div>
       <ChartPanel title="矩阵结果热力图" :option="matrixHeatmapOption">
         <template #actions>
           <el-select v-model="matrixHeatmapMetric" class="metric-select" size="small">
@@ -255,6 +275,23 @@
 
     <template v-else>
       <MetricCards :items="metricItems" />
+
+      <div class="section cache-report-section">
+        <div class="section-header">
+          <h2 class="section-title">缓存表现</h2>
+          <el-tag :type="reportCacheStatus.type" effect="plain">{{ reportCacheStatus.label }}</el-tag>
+        </div>
+        <div class="section-body">
+          <p class="cache-report-note">{{ reportCacheStatus.description }}</p>
+          <div class="cache-report-grid">
+            <div v-for="item in reportCacheCards" :key="item.label" class="cache-report-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <em>{{ item.sub }}</em>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div v-if="hasExpectedMetrics" class="section">
         <div class="section-header">
@@ -468,6 +505,97 @@ const hasExpectedMetrics = computed(() => !isMatrix.value && Boolean(expectedMet
 const cacheInclusiveTpm = computed(() => metricWithFallback(results.value, 'cache_inclusive_tpm', 'total_tpm'))
 const cacheHitTpm = computed(() => Number(results.value.cache_hit_tpm || 0))
 const cacheHitRate = computed(() => Number(results.value.cache_hit_rate || 0))
+const cacheTestEnabled = computed(() => Boolean(config.value.cache_test_enabled))
+const matrixCacheStats = computed(() => {
+  const bestCacheInclusiveTpm = Math.max(0, ...matrixPoints.value.map(item => metricWithFallback(item, 'cache_inclusive_tpm', 'total_tpm')))
+  const bestCacheHitRate = Math.max(0, ...matrixPoints.value.map(item => Number(item.cache_hit_rate || 0)))
+  const bestCacheHitTpm = Math.max(0, ...matrixPoints.value.map(item => Number(item.cache_hit_tpm || 0)))
+  const cachedTokens = Number(results.value.total_cached_input_tokens || 0) ||
+    matrixPoints.value.reduce((sum, point) => sum + Number(point.total_cached_input_tokens || point.cached_input_tokens || 0), 0)
+  const createdTokens = Number(results.value.total_cache_creation_input_tokens || 0) ||
+    matrixPoints.value.reduce((sum, point) => sum + Number(point.total_cache_creation_input_tokens || point.cache_creation_input_tokens || 0), 0)
+  const inclusiveTokens = Number(results.value.total_cache_inclusive_tokens || 0) ||
+    matrixPoints.value.reduce((sum, point) => sum + Number(point.total_cache_inclusive_tokens || point.cache_inclusive_total_tokens || 0), 0)
+  return {
+    bestCacheInclusiveTpm,
+    bestCacheHitRate,
+    bestCacheHitTpm,
+    cachedTokens,
+    createdTokens,
+    inclusiveTokens
+  }
+})
+const reportHasCacheUsage = computed(() => {
+  if (isMatrix.value) {
+    return matrixCacheStats.value.cachedTokens > 0 ||
+      matrixCacheStats.value.createdTokens > 0 ||
+      matrixCacheStats.value.bestCacheHitTpm > 0 ||
+      matrixCacheStats.value.bestCacheHitRate > 0
+  }
+  return Number(results.value.total_cached_input_tokens || 0) > 0 ||
+    Number(results.value.total_cache_creation_input_tokens || 0) > 0 ||
+    Number(results.value.total_cache_inclusive_tokens || 0) > 0 ||
+    cacheHitTpm.value > 0 ||
+    cacheHitRate.value > 0
+})
+const reportCacheStatus = computed(() => {
+  if (!cacheTestEnabled.value && !reportHasCacheUsage.value) {
+    return {
+      label: '未开启缓存测试',
+      description: '本次任务没有启用缓存测试，因此报告中不会产生缓存命中、缓存创建等上游用量字段。',
+      type: 'info'
+    }
+  }
+  if (!reportHasCacheUsage.value) {
+    return {
+      label: '上游未返回缓存用量',
+      description: '缓存测试已开启，但报告内没有观测到缓存 Token 字段；可能是上游暂不返回缓存用量，或本次样本没有形成命中。',
+      type: 'warning'
+    }
+  }
+  const hitRate = isMatrix.value ? matrixCacheStats.value.bestCacheHitRate : cacheHitRate.value
+  if (!hitRate) {
+    return {
+      label: '已创建但未命中',
+      description: '报告中已观测到缓存创建或含缓存 Token，但缓存命中率仍为 0。',
+      type: 'warning'
+    }
+  }
+  return {
+    label: '已命中缓存',
+    description: isMatrix.value
+      ? `矩阵最高缓存命中率 ${percent(matrixCacheStats.value.bestCacheHitRate)}，最高含缓存 TPM ${number(matrixCacheStats.value.bestCacheInclusiveTpm)}。`
+      : `缓存命中率 ${percent(cacheHitRate.value)}，含缓存 TPM ${number(cacheInclusiveTpm.value)}。`,
+    type: 'success'
+  }
+})
+const reportCacheCards = computed(() => {
+  if (isMatrix.value) {
+    return [
+      { label: '最高含缓存 TPM', value: number(matrixCacheStats.value.bestCacheInclusiveTpm), sub: '矩阵缓存吞吐峰值' },
+      { label: '最高缓存命中率', value: percent(matrixCacheStats.value.bestCacheHitRate), sub: `命中 TPM ${number(matrixCacheStats.value.bestCacheHitTpm)}` },
+      { label: '缓存命中 Token', value: number(matrixCacheStats.value.cachedTokens), sub: '矩阵测试点汇总' },
+      { label: '缓存创建 Token', value: number(matrixCacheStats.value.createdTokens), sub: '矩阵测试点汇总' },
+      { label: '含缓存总 Token', value: number(matrixCacheStats.value.inclusiveTokens), sub: '命中 + 真实输入输出口径' }
+    ]
+  }
+  return [
+    { label: '缓存命中率', value: percent(cacheHitRate.value), sub: `观测输入 ${number(cacheObservedInputTokens.value)}` },
+    { label: '缓存命中 TPM', value: number(cacheHitTpm.value), sub: `含缓存 TPM ${number(cacheInclusiveTpm.value)}` },
+    { label: '含缓存 TPM', value: number(cacheInclusiveTpm.value), sub: `有效 TPM ${number(results.value.total_tpm)}` },
+    { label: '缓存命中 Token', value: number(results.value.total_cached_input_tokens), sub: '上游 cached input tokens' },
+    { label: '缓存创建 Token', value: number(results.value.total_cache_creation_input_tokens), sub: '上游 cache creation tokens' },
+    { label: '含缓存总 Token', value: number(results.value.total_cache_inclusive_tokens), sub: '报告汇总 token 口径' }
+  ]
+})
+const cacheObservedInputTokens = computed(() => {
+  const explicit = Number(results.value.cache_observed_input_tokens)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  const totalInput = Number(results.value.total_input_tokens || 0)
+  const cached = Number(results.value.total_cached_input_tokens || 0)
+  const created = Number(results.value.total_cache_creation_input_tokens || 0)
+  return Math.max(totalInput, cached + created)
+})
 const resultErrorCounts = computed(() => {
   if (!isMatrix.value) return results.value.error_counts || {}
   const merged = {}
@@ -1373,6 +1501,64 @@ onMounted(loadReport)
   width: 180px;
 }
 
+.cache-report-section {
+  margin-top: 16px;
+}
+
+.cache-report-note {
+  margin: 0 0 14px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cache-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.cache-report-card {
+  min-width: 0;
+  min-height: 104px;
+  padding: 14px;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #0f766e;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.cache-report-card span,
+.cache-report-card em {
+  display: block;
+  overflow: hidden;
+  color: #4b5563;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-report-card strong {
+  display: block;
+  margin: 8px 0 6px;
+  overflow: hidden;
+  color: #0f766e;
+  font-family: "Fira Code", Consolas, monospace;
+  font-size: 22px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .pagination-row {
   display: flex;
   justify-content: flex-end;
@@ -1591,10 +1777,44 @@ onMounted(loadReport)
   }
 
   .expectation-grid,
+  .cache-report-grid,
   .diagnostic-grid,
   .recommendation-grid,
   .retention-panel {
     grid-template-columns: 1fr;
   }
+}
+
+.recommendation-card,
+.audit-item,
+.expectation-card,
+.diagnostic-card,
+.retention-panel > div,
+.customer-summary {
+  border-color: #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.recommendation-card.warning,
+.audit-item.warning,
+.expectation-card.warning,
+.diagnostic-card.warning {
+  border-color: #fde68a;
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.recommendation-card.danger,
+.expectation-card.danger {
+  border-color: #fecaca;
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.recommendation-card,
+.expectation-card,
+.diagnostic-card {
+  border-left-color: #111827;
 }
 </style>

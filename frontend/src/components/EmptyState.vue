@@ -49,11 +49,9 @@ defineEmits(['action'])
   gap: 14px;
   min-height: 260px;
   padding: 34px 20px;
-  border: 1px dashed #bfdbfe;
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, rgba(248, 251, 255, 0.96), rgba(239, 246, 255, 0.72)),
-    #ffffff;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
   text-align: center;
 }
 
@@ -62,11 +60,10 @@ defineEmits(['action'])
   place-items: center;
   width: 58px;
   height: 58px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #dbeafe, #ffffff);
-  color: #2563eb;
+  border-radius: 8px;
+  background: #f2f3f5;
+  color: #111827;
   font-size: 28px;
-  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.12);
 }
 
 .empty-state-copy {
@@ -76,13 +73,13 @@ defineEmits(['action'])
 }
 
 .empty-state-copy strong {
-  color: #1e293b;
+  color: #111827;
   font-size: 16px;
   line-height: 1.4;
 }
 
 .empty-state-copy span {
-  color: #64748b;
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.6;
 }

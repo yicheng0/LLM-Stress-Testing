@@ -276,10 +276,10 @@ function formatTime(value) {
     display: grid;
     gap: 12px;
     padding: 14px;
-    border: 1px solid #dfe7f2;
-    border-radius: 12px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05);
   }
 
   .mobile-card-head,
@@ -295,7 +295,7 @@ function formatTime(value) {
     grid-template-columns: 22px minmax(0, 1fr);
     gap: 8px;
     min-width: 0;
-    color: #1e293b;
+    color: #111827;
     font-size: 14px;
     font-weight: 800;
     line-height: 1.35;
@@ -305,7 +305,7 @@ function formatTime(value) {
     width: 18px;
     height: 18px;
     margin: 1px 0 0;
-    accent-color: #2563eb;
+    accent-color: #111111;
     cursor: pointer;
   }
 
@@ -319,14 +319,14 @@ function formatTime(value) {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    color: #64748b;
+    color: #6b7280;
     font-size: 12px;
   }
 
   .mobile-card-meta span {
     padding: 4px 7px;
     border-radius: 999px;
-    background: #eef6ff;
+    background: #f2f3f5;
   }
 
   .mobile-card-metrics {
@@ -338,15 +338,15 @@ function formatTime(value) {
   .mobile-card-metrics div {
     min-width: 0;
     padding: 9px;
-    border-radius: 10px;
+    border-radius: 8px;
     background: #ffffff;
-    box-shadow: inset 0 0 0 1px #e5edf6;
+    box-shadow: inset 0 0 0 1px #e5e7eb;
   }
 
   .mobile-card-metrics span,
   .mobile-card-foot > span {
     display: block;
-    color: #64748b;
+    color: #6b7280;
     font-size: 12px;
   }
 
@@ -354,7 +354,7 @@ function formatTime(value) {
     display: block;
     margin-top: 5px;
     overflow: hidden;
-    color: #2563eb;
+    color: #111827;
     font-family: "Fira Code", Consolas, monospace;
     font-size: 14px;
     text-overflow: ellipsis;

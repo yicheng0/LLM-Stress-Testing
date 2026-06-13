@@ -306,9 +306,9 @@ onMounted(() => {
   gap: 12px;
   margin-bottom: 14px;
   padding: 14px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f8fbff;
+  background: #ffffff;
 }
 
 .retention-banner div {
@@ -317,12 +317,12 @@ onMounted(() => {
 }
 
 .retention-banner strong {
-  color: #1e293b;
+  color: #111827;
   font-size: 14px;
 }
 
 .retention-banner span {
-  color: #64748b;
+  color: #6b7280;
   font-size: 12px;
   line-height: 1.5;
 }
