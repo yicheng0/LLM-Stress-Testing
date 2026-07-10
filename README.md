@@ -26,8 +26,13 @@ cd D:\model_rpm_test
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r backend\requirements.txt
+python -m playwright install chromium
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+PDF report export is generated server-side with Playwright Chromium. Local development needs the
+`python -m playwright install chromium` step once after installing backend requirements; Docker
+builds install the browser automatically.
 
 Frontend:
 

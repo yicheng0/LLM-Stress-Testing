@@ -699,6 +699,7 @@ const capacityCards = computed(() => {
   ]
 })
 const downloadItems = computed(() => [
+  { kind: 'pdf', label: 'PDF 报告' },
   { kind: 'html', label: 'HTML 可视化报告' },
   { kind: 'markdown', label: 'Markdown 报告' },
   { kind: 'summary', label: 'Summary JSON' },

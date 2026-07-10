@@ -9,9 +9,5 @@ export function printableReportUrl(router, id) {
 }
 
 export function openReportDownload(router, id, kind) {
-  if (kind === 'pdf') {
-    window.open(printableReportUrl(router, id), '_blank')
-    return
-  }
   window.open(downloadUrl(id, kind), '_blank')
 }

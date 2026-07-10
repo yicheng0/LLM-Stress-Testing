@@ -15,6 +15,7 @@ from backend.app.config import settings
 from backend.app.core.auth import AuthUser, can_access_task, current_user, parse_token, require_root
 from backend.app.core.base_url_policy import is_built_in_base_url
 from backend.app.core.progress import ProgressHub
+from backend.app.core.pdf_report import PDF_RENDER_ERROR, ensure_pdf_report, pdf_path_for_result
 from backend.app.core.report_service import build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
@@ -849,6 +850,7 @@ async def get_report(
         "markdown": result.report_md_path if result else None,
         "html": result.report_html_path if result else None,
         "matrix_csv": result.matrix_csv_path if result else None,
+        "pdf": str(pdf_path_for_result(result.summary_path if result else None, settings.results_dir)) if result and result.summary_path else None,
     }
     events = [_event_out(event) for event in repository.list_events(task_id)]
     return ReportOut(
@@ -909,6 +911,16 @@ def _safe_download_file(path: str | None) -> Path | None:
     return candidate
 
 
+def _safe_output_file(path: str | Path | None) -> Path | None:
+    if not path:
+        return None
+    candidate = Path(path).resolve()
+    results_root = settings.results_dir.resolve()
+    if results_root not in candidate.parents:
+        return None
+    return candidate
+
+
 @router.get("/{task_id}/download/{kind}")
 async def download_report(
     task_id: str,
@@ -916,13 +928,36 @@ async def download_report(
     user: AuthUser = Depends(_download_user),
     repository: Repository = Depends(get_repository),
 ) -> FileResponse:
-    if kind not in {"summary", "details", "markdown", "html", "matrix_csv"}:
+    if kind not in {"summary", "details", "markdown", "html", "matrix_csv", "pdf"}:
         raise HTTPException(status_code=404, detail="不支持的下载类型")
     item = repository.get_task(task_id)
     if not item:
         raise HTTPException(status_code=404, detail="任务不存在")
     task, result = item
     _ensure_task_access(task, user)
+    if kind == "pdf":
+        if not result or not result.summary_path:
+            raise HTTPException(status_code=404, detail="报告文件不存在")
+        summary = _safe_load_summary(result) or _summary_from_file(result)
+        if not summary:
+            raise HTTPException(status_code=404, detail="报告文件不存在")
+        output_path = _safe_output_file(pdf_path_for_result(result.summary_path, settings.results_dir))
+        if not output_path:
+            raise HTTPException(status_code=404, detail="报告文件不存在")
+        try:
+            path = ensure_pdf_report(
+                summary=summary,
+                details_path=result.details_jsonl_path,
+                charts_path=result.charts_path,
+                output_path=output_path,
+            )
+        except RuntimeError as exc:
+            logger.exception("PDF report generation failed for task %s", task_id)
+            raise HTTPException(status_code=500, detail=str(exc) or PDF_RENDER_ERROR) from exc
+        safe_path = _safe_download_file(str(path))
+        if not safe_path:
+            raise HTTPException(status_code=404, detail="报告文件不存在")
+        return FileResponse(safe_path, media_type="application/pdf", filename=safe_path.name)
     path = _safe_download_file(_download_path(result, kind))
     if not path:
         raise HTTPException(status_code=404, detail="报告文件不存在")

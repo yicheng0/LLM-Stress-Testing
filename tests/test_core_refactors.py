@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -19,6 +21,7 @@ from backend.app.core.task_status import (
     stopped_final_status,
 )
 from backend.app.core.preflight import _body as preflight_body
+from backend.app.core.pdf_report import ensure_pdf_report, pdf_path_for_result, render_pdf_html
 from backend.app.core.repository import Repository
 from backend.app.core.report_service import build_chart_data, load_chart_cache, load_details
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi, infer_json_schema
@@ -418,6 +421,127 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertEqual(chart_point["cache_hit_tpm"], 2400)
         self.assertEqual(chart_point["cache_hit_rate"], 0.25)
         self.assertEqual(chart_point["total_cached_input_tokens"], 400)
+
+    def test_single_pdf_html_contains_metrics_and_static_charts(self):
+        summary = {
+            "config": {
+                "api_protocol": "openai",
+                "base_url": "https://api.example.com",
+                "endpoint": "/v1/chat/completions",
+                "model": "gpt-5.5",
+                "concurrency": 10,
+                "duration_sec": 10,
+                "input_tokens_target": 100,
+                "input_tokens_actual": 100,
+                "max_output_tokens": 20,
+                "warmup_requests": 0,
+                "cache_test_enabled": True,
+                "cache_warmup_requests": 2,
+                "enable_stream": True,
+            },
+            "results": {
+                "total_requests": 2,
+                "successful_requests": 2,
+                "failed_requests": 0,
+                "success_rate": 1,
+                "qps": 1,
+                "rpm": 60,
+                "total_tpm": 1200,
+                "total_tps": 20,
+                "input_tpm": 1000,
+                "input_tps": 16.6,
+                "output_tpm": 200,
+                "output_tps": 3.3,
+                "cache_hit_rate": 0.5,
+                "cache_hit_tpm": 500,
+                "cache_inclusive_tpm": 1700,
+                "total_cached_input_tokens": 50,
+                "total_cache_creation_input_tokens": 10,
+                "total_cache_inclusive_tokens": 170,
+                "latency_sec_avg": 1,
+                "latency_sec_p50": 1,
+                "latency_sec_p95": 1.5,
+                "latency_sec_p99": 2,
+                "error_counts": {},
+            },
+        }
+        charts = {
+            "timeseries": [{"time_sec": 0, "qps": 1, "tpm": 100}, {"time_sec": 1, "qps": 2, "tpm": 200}],
+            "latency_histogram": {"bins": [1, 2], "counts": [3, 4]},
+            "ttft_histogram": {"bins": [1, 2], "counts": [1, 2]},
+            "decode_histogram": {"bins": [1, 2], "counts": [2, 1]},
+            "error_counts": {},
+        }
+
+        html = render_pdf_html(summary, charts)
+
+        self.assertIn("LLM API 压测报告", html)
+        self.assertIn("缓存表现", html)
+        self.assertIn("吞吐趋势", html)
+        self.assertGreaterEqual(html.count("<svg"), 4)
+
+    def test_matrix_pdf_html_contains_heatmaps_and_points(self):
+        summary = {
+            "matrix": True,
+            "test_points": 1,
+            "config": {
+                "api_protocol": "openai",
+                "base_url": "https://api.example.com",
+                "endpoint": "/v1/chat/completions",
+                "model": "gpt-5.5",
+                "duration_sec": 10,
+                "cache_test_enabled": True,
+                "cache_warmup_requests": 1,
+                "enable_stream": True,
+            },
+            "results_matrix": [{
+                "matrix_config": {"input_tokens": 100, "concurrency": 10},
+                "results": {"total_tpm": 1000, "cache_hit_rate": 0.25},
+            }],
+        }
+        charts = {
+            "matrix_points": [{
+                "input_tokens": 100,
+                "concurrency": 10,
+                "rpm": 60,
+                "total_tpm": 1000,
+                "cache_inclusive_tpm": 1200,
+                "cache_hit_rate": 0.25,
+                "success_rate": 1,
+                "latency_p95": 1.2,
+            }],
+        }
+
+        html = render_pdf_html(summary, charts)
+
+        self.assertIn("LLM API 矩阵压测报告", html)
+        self.assertIn("缓存命中率热力图", html)
+        self.assertIn("矩阵测试点", html)
+        self.assertGreaterEqual(html.count("<svg"), 2)
+
+    def test_pdf_path_is_derived_from_summary_path(self):
+        self.assertEqual(
+            pdf_path_for_result("results/task/summary_20260101_010101.json", Path("results/task")).name,
+            "report_20260101_010101.pdf",
+        )
+        self.assertEqual(
+            pdf_path_for_result("results/task/matrix_summary_20260101_010101.json", Path("results/task")).name,
+            "matrix_report_20260101_010101.pdf",
+        )
+
+    def test_ensure_pdf_report_reuses_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = Path(tmp) / "report.pdf"
+            pdf_path.write_bytes(b"%PDF cached")
+
+            path = ensure_pdf_report(
+                summary={"config": {}, "results": {}},
+                details_path=None,
+                charts_path=None,
+                output_path=pdf_path,
+            )
+
+        self.assertEqual(path, pdf_path)
 
     def test_retry_metrics_inclusive_for_failed_results(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)
