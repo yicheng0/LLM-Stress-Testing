@@ -85,6 +85,7 @@ class RequestExecutor:
             max_output_tokens=self.config.max_output_tokens,
             temperature=self.config.temperature,
             enable_stream=self.config.enable_stream,
+            cache_test_enabled=self.config.cache_test_enabled,
         )
 
     def build_headers(self) -> dict[str, str]:

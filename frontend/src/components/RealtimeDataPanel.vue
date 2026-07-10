@@ -356,8 +356,8 @@ const cacheStatus = computed(() => {
   }
   if (aggregate.value.cachedInputTokens <= 0) {
     return {
-      label: '暂未命中',
-      description: '已观测到缓存创建或含缓存吞吐，但命中 Token 仍为 0。',
+      label: '已创建但未读命中',
+      description: '已创建缓存但未读命中，可能是协议未启用显式缓存、上游缓存 TTL / 最小长度限制，或网关未返回命中字段。',
       type: 'warning',
       tone: 'waiting'
     }

@@ -99,6 +99,7 @@ def build_payload(
     max_output_tokens: int,
     temperature: float | None,
     enable_stream: bool,
+    cache_test_enabled: bool = False,
 ) -> dict[str, Any]:
     if protocol == "gemini":
         generation_config: dict[str, Any] = {
@@ -113,10 +114,17 @@ def build_payload(
         }
 
     if protocol == "anthropic":
+        content: str | list[dict[str, Any]] = prompt
+        if cache_test_enabled:
+            content = [{
+                "type": "text",
+                "text": prompt,
+                "cache_control": {"type": "ephemeral"},
+            }]
         payload: dict[str, Any] = {
             "model": model,
             "system": "You are a benchmarking target. Return a concise deterministic answer.",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": max_output_tokens,
             "stream": enable_stream,
         }
@@ -204,10 +212,18 @@ def extract_token_usage(usage: dict) -> TokenUsage:
         _nested_int(usage, "input_tokens_details", "cached_tokens"),
         _to_int(usage.get("cachedContentTokenCount")),
         _to_int(usage.get("cache_read_input_tokens")),
+        _to_int(usage.get("cached_input_tokens")),
         _to_int(usage.get("prompt_cache_hit_tokens")),
     )
-    cache_creation_input_tokens = _to_int(usage.get("cache_creation_input_tokens"))
-    cache_miss_tokens = _to_int(usage.get("prompt_cache_miss_tokens"))
+    cache_creation_input_tokens = max(
+        _to_int(usage.get("cache_creation_input_tokens")),
+        _to_int(usage.get("cache_write_tokens")),
+        _to_int(usage.get("cached_input_tokens_creation")),
+    )
+    cache_miss_tokens = max(
+        _to_int(usage.get("prompt_cache_miss_tokens")),
+        _to_int(usage.get("cache_miss_input_tokens")),
+    )
 
     total_tokens_from_usage = total_tokens > 0
     if total_tokens <= 0 and (input_tokens or output_tokens):
@@ -216,7 +232,11 @@ def extract_token_usage(usage: dict) -> TokenUsage:
     # Anthropic reports cache read/write tokens separately from input_tokens, so
     # cache-inclusive input needs to add them explicitly. OpenAI and Gemini
     # total token fields already include cached prompt content.
-    if usage.get("cache_read_input_tokens") is not None or usage.get("cache_creation_input_tokens") is not None:
+    if (
+        usage.get("cache_read_input_tokens") is not None
+        or usage.get("cache_creation_input_tokens") is not None
+        or usage.get("cache_write_tokens") is not None
+    ):
         cache_inclusive_total_tokens = input_tokens + output_tokens + cached_input_tokens + cache_creation_input_tokens
     elif cache_miss_tokens and not total_tokens_from_usage and input_tokens <= 0:
         cache_inclusive_total_tokens = cached_input_tokens + cache_miss_tokens + output_tokens

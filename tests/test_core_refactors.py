@@ -1076,6 +1076,17 @@ class TokenUsageParsingTest(unittest.TestCase):
         self.assertEqual(usage.total_tokens, 20)
         self.assertEqual(usage.cache_inclusive_total_tokens, 120)
 
+    def test_gateway_cache_aliases_are_supported(self):
+        usage = extract_token_usage({
+            "cached_input_tokens": 70,
+            "cache_write_tokens": 30,
+            "completion_tokens": 20,
+        })
+
+        self.assertEqual(usage.cached_input_tokens, 70)
+        self.assertEqual(usage.cache_creation_input_tokens, 30)
+        self.assertEqual(usage.cache_inclusive_total_tokens, 120)
+
 
 class RequestPayloadTemperatureTest(unittest.TestCase):
     def test_payload_omits_temperature_when_none(self):
@@ -1114,6 +1125,53 @@ class RequestPayloadTemperatureTest(unittest.TestCase):
         )
 
         self.assertEqual(payload["temperature"], 0)
+
+    def test_anthropic_cache_mode_adds_ephemeral_cache_control(self):
+        payload = build_payload(
+            "anthropic",
+            endpoint="/messages",
+            model="claude-sonnet",
+            prompt="stable prompt",
+            max_output_tokens=16,
+            temperature=None,
+            enable_stream=True,
+            cache_test_enabled=True,
+        )
+
+        content = payload["messages"][0]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0]["type"], "text")
+        self.assertEqual(content[0]["text"], "stable prompt")
+        self.assertEqual(content[0]["cache_control"], {"type": "ephemeral"})
+
+    def test_anthropic_non_cache_mode_keeps_plain_content(self):
+        payload = build_payload(
+            "anthropic",
+            endpoint="/messages",
+            model="claude-sonnet",
+            prompt="stable prompt",
+            max_output_tokens=16,
+            temperature=None,
+            enable_stream=True,
+            cache_test_enabled=False,
+        )
+
+        self.assertEqual(payload["messages"][0]["content"], "stable prompt")
+
+    def test_openai_cache_mode_does_not_add_unknown_cache_fields(self):
+        payload = build_payload(
+            "openai",
+            endpoint="/chat/completions",
+            model="gpt-model",
+            prompt="stable prompt",
+            max_output_tokens=16,
+            temperature=None,
+            enable_stream=True,
+            cache_test_enabled=True,
+        )
+
+        self.assertNotIn("cache_control", json.dumps(payload))
+        self.assertNotIn("prompt_cache", json.dumps(payload))
 
     def test_load_test_config_accepts_empty_temperature(self):
         self.assertIsNone(LoadTestConfig.from_mapping({"temperature": None}).temperature)

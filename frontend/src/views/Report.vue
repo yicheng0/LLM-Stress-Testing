@@ -557,7 +557,7 @@ const reportCacheStatus = computed(() => {
   if (!hitRate) {
     return {
       label: '已创建但未命中',
-      description: '报告中已观测到缓存创建或含缓存 Token，但缓存命中率仍为 0。',
+      description: '报告中已观测到缓存创建或含缓存 Token，但缓存命中率仍为 0；可能是协议未启用显式缓存、上游缓存 TTL / 最小长度限制，或网关未返回命中字段。',
       type: 'warning'
     }
   }

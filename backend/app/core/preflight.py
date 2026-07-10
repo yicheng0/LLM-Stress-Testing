@@ -77,6 +77,7 @@ def _body(payload: dict[str, Any]) -> dict[str, Any]:
         max_output_tokens=16,
         temperature=None,
         enable_stream=False,
+        cache_test_enabled=False,
     )
 
 
