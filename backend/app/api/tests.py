@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -16,7 +17,7 @@ from backend.app.core.auth import AuthUser, can_access_task, current_user, parse
 from backend.app.core.base_url_policy import is_built_in_base_url
 from backend.app.core.progress import ProgressHub
 from backend.app.core.pdf_report import PDF_RENDER_ERROR, ensure_pdf_report, pdf_path_for_result
-from backend.app.core.report_service import build_chart_data, load_details
+from backend.app.core.report_service import backfill_stream_latency_metrics, build_chart_data, load_details
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestEvent, TestResult, TestTask
@@ -838,7 +839,12 @@ async def get_report(
     task, result = item
     _ensure_task_access(task, user)
     config = json.loads(task.config_json)
-    summary = _summary(result)
+    summary = await asyncio.to_thread(
+        backfill_stream_latency_metrics,
+        _summary(result),
+        result.details_jsonl_path if result else None,
+        enable_stream=bool(config.get("enable_stream", task.enable_stream)),
+    )
     charts = build_chart_data(
         summary,
         result.details_jsonl_path if result else None,
@@ -941,6 +947,12 @@ async def download_report(
         summary = _safe_load_summary(result) or _summary_from_file(result)
         if not summary:
             raise HTTPException(status_code=404, detail="报告文件不存在")
+        summary = await asyncio.to_thread(
+            backfill_stream_latency_metrics,
+            summary,
+            result.details_jsonl_path,
+            enable_stream=bool(_config(task).get("enable_stream", task.enable_stream)),
+        )
         output_path = _safe_output_file(pdf_path_for_result(result.summary_path, settings.results_dir))
         if not output_path:
             raise HTTPException(status_code=404, detail="报告文件不存在")

@@ -24,7 +24,7 @@ from backend.app.core.task_status import (
 from backend.app.core.preflight import _body as preflight_body
 from backend.app.core.pdf_report import ensure_pdf_report, pdf_path_for_result, render_pdf_html
 from backend.app.core.repository import Repository
-from backend.app.core.report_service import build_chart_data, load_chart_cache, load_details
+from backend.app.core.report_service import backfill_stream_latency_metrics, build_chart_data, load_chart_cache, load_details
 from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_openapi, infer_json_schema
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestResult as DbTestResult
@@ -189,7 +189,7 @@ class TaskManagerStatusTest(unittest.IsolatedAsyncioTestCase):
             return False
 
 
-class MetricsAccumulatorTest(unittest.TestCase):
+class MetricsSummaryTest(unittest.TestCase):
     def test_accumulator_matches_legacy_summary_builder(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)
         results = [
@@ -235,6 +235,212 @@ class MetricsAccumulatorTest(unittest.TestCase):
             },
         )
 
+
+class ReportLatencyBackfillTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def task(*, enable_stream: bool = True) -> DbTestTask:
+        config = {"api_protocol": "openai", "enable_stream": enable_stream}
+        return DbTestTask(
+            id="task-latency",
+            name="Latency report",
+            api_protocol="openai",
+            base_url="https://example.com",
+            endpoint="/v1/chat/completions",
+            model="gpt-5.5",
+            status="completed",
+            concurrency=1,
+            duration_sec=10,
+            input_tokens=10,
+            max_output_tokens=10,
+            enable_stream=enable_stream,
+            matrix_mode=False,
+            config_json=json.dumps(config),
+            created_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+
+    @staticmethod
+    def write_details(path: Path) -> None:
+        rows = [
+            result(request_id=1, latency_sec=10.0, ttft_sec=2.0).__dict__,
+            result(request_id=2, latency_sec=8.0, ttft_sec=1.0).__dict__,
+            result(request_id=3, ok=False, latency_sec=3.0, ttft_sec=0.5).__dict__,
+        ]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    @staticmethod
+    def repository(task: DbTestTask, result_row: DbTestResult):
+        class FakeRepository:
+            def get_task(self, _task_id):
+                return task, result_row
+
+            def list_events(self, _task_id):
+                return []
+
+        return FakeRepository()
+
+    async def test_report_backfills_streaming_ttft_and_decode_from_details(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            details_path = Path(tmp) / "details.jsonl"
+            self.write_details(details_path)
+            summary = {
+                "config": {"enable_stream": True},
+                "results": {
+                    "ttft_sec_avg": None,
+                    "decode_sec_avg": None,
+                },
+            }
+            task = self.task()
+            result_row = DbTestResult(
+                task_id=task.id,
+                summary_json=json.dumps(summary),
+                details_jsonl_path=str(details_path),
+            )
+
+            report = await tests_api.get_report(
+                task.id,
+                user=ROOT_USER,
+                repository=self.repository(task, result_row),
+            )
+
+        metrics = report.summary["results"]
+        self.assertEqual(metrics["ttft_sec_avg"], 1.5)
+        self.assertEqual(metrics["ttft_sec_p50"], 1.5)
+        self.assertEqual(metrics["ttft_sec_p90"], 1.9)
+        self.assertEqual(metrics["ttft_sec_p95"], 1.95)
+        self.assertEqual(metrics["ttft_sec_p99"], 1.99)
+        self.assertEqual(metrics["ttft_samples"], 2)
+        self.assertEqual(metrics["decode_sec_avg"], 7.5)
+        self.assertEqual(metrics["decode_sec_p50"], 7.5)
+        self.assertEqual(metrics["decode_sec_p90"], 7.9)
+        self.assertEqual(metrics["decode_sec_p95"], 7.95)
+        self.assertEqual(metrics["decode_sec_p99"], 7.99)
+
+    async def test_report_does_not_backfill_non_stream_latency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            details_path = Path(tmp) / "details.jsonl"
+            self.write_details(details_path)
+            summary = {"config": {"enable_stream": False}, "results": {}}
+            task = self.task(enable_stream=False)
+            result_row = DbTestResult(
+                task_id=task.id,
+                summary_json=json.dumps(summary),
+                details_jsonl_path=str(details_path),
+            )
+
+            report = await tests_api.get_report(
+                task.id,
+                user=ROOT_USER,
+                repository=self.repository(task, result_row),
+            )
+
+        self.assertNotIn("ttft_sec_avg", report.summary["results"])
+        self.assertNotIn("decode_sec_avg", report.summary["results"])
+
+    def test_backfill_skips_invalid_and_malformed_detail_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            details_path = Path(tmp) / "details.jsonl"
+            rows = [
+                "not-json\n",
+                json.dumps({"ok": True, "latency_sec": 1.0, "ttft_sec": 2.0}) + "\n",
+                json.dumps({"ok": True, "latency_sec": 1.0, "ttft_sec": float("nan")}) + "\n",
+                json.dumps({"ok": True, "latency_sec": 4.0, "ttft_sec": 1.0}) + "\n",
+            ]
+            details_path.write_text("".join(rows), encoding="utf-8")
+
+            summary = backfill_stream_latency_metrics(
+                {"config": {"enable_stream": True}, "results": {}},
+                str(details_path),
+            )
+
+        self.assertEqual(summary["results"]["ttft_sec_avg"], 1.0)
+        self.assertEqual(summary["results"]["decode_sec_avg"], 3.0)
+        self.assertEqual(summary["results"]["ttft_samples"], 1)
+
+    def test_backfill_reuses_cached_metrics_for_unchanged_details(self):
+        import backend.app.core.report_service as report_service
+
+        with tempfile.TemporaryDirectory() as tmp:
+            details_path = Path(tmp) / "details.jsonl"
+            self.write_details(details_path)
+            report_service._load_stream_latency_metrics.cache_clear()
+            summary = {"config": {"enable_stream": True}, "results": {}}
+
+            backfill_stream_latency_metrics(summary, str(details_path))
+            first = report_service._load_stream_latency_metrics.cache_info()
+            backfill_stream_latency_metrics(summary, str(details_path))
+            second = report_service._load_stream_latency_metrics.cache_info()
+
+        self.assertEqual(first.misses, 1)
+        self.assertEqual(second.misses, 1)
+        self.assertEqual(second.hits, 1)
+
+    async def test_report_preserves_existing_latency_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            details_path = Path(tmp) / "details.jsonl"
+            self.write_details(details_path)
+            summary = {
+                "config": {"enable_stream": True},
+                "results": {"ttft_sec_avg": 9.0, "decode_sec_p99": 12.0},
+            }
+            task = self.task()
+            result_row = DbTestResult(
+                task_id=task.id,
+                summary_json=json.dumps(summary),
+                details_jsonl_path=str(details_path),
+            )
+
+            report = await tests_api.get_report(
+                task.id,
+                user=ROOT_USER,
+                repository=self.repository(task, result_row),
+            )
+
+        metrics = report.summary["results"]
+        self.assertEqual(metrics["ttft_sec_avg"], 9.0)
+        self.assertEqual(metrics["ttft_sec_p95"], 1.95)
+        self.assertEqual(metrics["decode_sec_p99"], 12.0)
+        self.assertEqual(metrics["decode_sec_p95"], 7.95)
+
+    async def test_pdf_download_uses_backfilled_latency_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp)
+            details_path = results_dir / "details.jsonl"
+            summary_path = results_dir / "summary.json"
+            self.write_details(details_path)
+            summary_path.write_text("{}", encoding="utf-8")
+            summary = {"config": {"enable_stream": True}, "results": {}}
+            task = self.task()
+            result_row = DbTestResult(
+                task_id=task.id,
+                summary_json=json.dumps(summary),
+                summary_path=str(summary_path),
+                details_jsonl_path=str(details_path),
+            )
+            captured = {}
+
+            def fake_ensure_pdf_report(*, summary, output_path, **_kwargs):
+                captured["summary"] = summary
+                output_path.write_bytes(b"%PDF-1.4")
+                return output_path
+
+            with (
+                patch.object(tests_api.settings, "results_dir", results_dir),
+                patch.object(tests_api, "ensure_pdf_report", side_effect=fake_ensure_pdf_report),
+            ):
+                await tests_api.download_report(
+                    task.id,
+                    "pdf",
+                    user=ROOT_USER,
+                    repository=self.repository(task, result_row),
+                )
+
+        metrics = captured["summary"]["results"]
+        self.assertEqual(metrics["ttft_sec_avg"], 1.5)
+        self.assertEqual(metrics["decode_sec_p99"], 7.99)
+
+
+class MetricsAccumulatorTest(unittest.TestCase):
     def test_report_writer_persists_chart_cache(self):
         import tempfile
 
