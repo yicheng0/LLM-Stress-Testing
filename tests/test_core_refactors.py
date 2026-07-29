@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -446,6 +447,9 @@ class MetricsAccumulatorTest(unittest.TestCase):
                 "success_rate": 1,
                 "qps": 1,
                 "rpm": 60,
+                "total_input_tokens": 1000,
+                "total_output_tokens": 200,
+                "total_tokens": 1200,
                 "total_tpm": 1200,
                 "total_tps": 20,
                 "input_tpm": 1000,
@@ -460,9 +464,22 @@ class MetricsAccumulatorTest(unittest.TestCase):
                 "total_cache_inclusive_tokens": 170,
                 "latency_sec_avg": 1,
                 "latency_sec_p50": 1,
+                "latency_sec_p90": 1.4,
                 "latency_sec_p95": 1.5,
                 "latency_sec_p99": 2,
-                "error_counts": {},
+                "ttft_sec_avg": 0.2,
+                "ttft_sec_p50": 0.2,
+                "ttft_sec_p90": 0.3,
+                "ttft_sec_p95": 0.4,
+                "ttft_sec_p99": 0.5,
+                "ttft_samples": 2,
+                "decode_sec_avg": 0.8,
+                "decode_sec_p50": 0.8,
+                "decode_sec_p90": 1.1,
+                "decode_sec_p95": 1.2,
+                "decode_sec_p99": 1.5,
+                "status_counts": {"200": 2},
+                "error_counts": {"HTTP_429": 1},
             },
         }
         charts = {
@@ -478,7 +495,52 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertIn("LLM API 压测报告", html)
         self.assertIn("缓存表现", html)
         self.assertIn("吞吐趋势", html)
+        self.assertIn("请求指标", html)
+        self.assertIn("状态码分布", html)
+        self.assertIn("Input TPM", html)
+        self.assertIn("缓存命中 TPM", html)
+        self.assertIn("总输入 Token", html)
+        self.assertIn("P90", html)
+        self.assertIn("0.3000s", html)
+        self.assertIn("HTTP_429", html)
         self.assertGreaterEqual(html.count("<svg"), 4)
+
+    def test_pdf_latency_distinguishes_missing_values_from_real_zero(self):
+        summary = {
+            "config": {"enable_stream": True},
+            "results": {
+                "latency_sec_avg": 0,
+                "latency_sec_p50": 0,
+                "latency_sec_p90": 0,
+                "latency_sec_p95": 0,
+                "latency_sec_p99": 0,
+                "ttft_sec_avg": None,
+                "ttft_sec_p50": None,
+                "ttft_sec_p90": None,
+                "ttft_sec_p95": None,
+                "ttft_sec_p99": None,
+                "decode_sec_avg": None,
+                "decode_sec_p50": None,
+                "decode_sec_p90": None,
+                "decode_sec_p95": None,
+                "decode_sec_p99": None,
+                "ttft_samples": 0,
+            },
+        }
+
+        html = render_pdf_html(summary)
+
+        self.assertIn("0.0000s", html)
+        self.assertGreaterEqual(html.count("不可用"), 10)
+        self.assertIn("未采集到有效首 Token 样本", html)
+
+    def test_non_stream_pdf_explains_ttft_and_decode_are_unavailable(self):
+        html = render_pdf_html({
+            "config": {"enable_stream": False},
+            "results": {"ttft_samples": 0},
+        })
+
+        self.assertIn("非流式模式无法准确测量 TTFT / Decode", html)
 
     def test_matrix_pdf_html_contains_heatmaps_and_points(self):
         summary = {
@@ -503,12 +565,42 @@ class MetricsAccumulatorTest(unittest.TestCase):
             "matrix_points": [{
                 "input_tokens": 100,
                 "concurrency": 10,
+                "total_requests": 10,
+                "successful_requests": 9,
+                "failed_requests": 1,
                 "rpm": 60,
+                "qps": 1,
+                "input_tpm": 800,
+                "output_tpm": 200,
                 "total_tpm": 1000,
+                "input_tps": 13.3,
+                "output_tps": 3.3,
+                "total_tps": 16.6,
                 "cache_inclusive_tpm": 1200,
+                "cache_hit_tpm": 200,
                 "cache_hit_rate": 0.25,
+                "total_input_tokens": 800,
+                "total_output_tokens": 200,
+                "total_tokens": 1000,
+                "total_cached_input_tokens": 200,
+                "total_cache_creation_input_tokens": 50,
+                "total_cache_inclusive_tokens": 1200,
                 "success_rate": 1,
+                "latency_avg": 1,
+                "latency_p50": 1.1,
+                "latency_p90": 1.15,
                 "latency_p95": 1.2,
+                "latency_p99": 1.3,
+                "ttft_avg": 0.2,
+                "ttft_p50": 0.25,
+                "ttft_p90": 0.3,
+                "ttft_p95": 0.35,
+                "ttft_p99": 0.4,
+                "decode_avg": 0.8,
+                "decode_p50": 0.85,
+                "decode_p90": 0.9,
+                "decode_p95": 0.95,
+                "decode_p99": 1.0,
             }],
         }
 
@@ -517,7 +609,48 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertIn("LLM API 矩阵压测报告", html)
         self.assertIn("缓存命中率热力图", html)
         self.assertIn("矩阵测试点", html)
+        self.assertIn("吞吐与成功率", html)
+        self.assertIn("Token 与缓存", html)
+        self.assertIn("延迟分布", html)
+        self.assertIn("Input TPM", html)
+        self.assertIn("总输入 Token", html)
+        self.assertIn("Decode", html)
+        self.assertIn("P90", html)
+        self.assertIn("0.9000s", html)
         self.assertGreaterEqual(html.count("<svg"), 2)
+
+    def test_matrix_chart_points_include_complete_pdf_metrics(self):
+        point = {
+            "matrix_config": {"input_tokens": 100, "concurrency": 10},
+            "results": {
+                "total_requests": 10,
+                "successful_requests": 9,
+                "failed_requests": 1,
+                "input_tpm": 800,
+                "output_tpm": 200,
+                "input_tps": 13.3,
+                "output_tps": 3.3,
+                "total_input_tokens": 800,
+                "total_output_tokens": 200,
+                "total_tokens": 1000,
+                "latency_sec_p90": 1.15,
+                "ttft_sec_p90": 0.3,
+                "decode_sec_avg": 0.8,
+                "decode_sec_p50": 0.85,
+                "decode_sec_p90": 0.9,
+                "decode_sec_p95": 0.95,
+                "decode_sec_p99": 1.0,
+            },
+        }
+
+        chart_point = build_matrix_chart_data([point])["matrix_points"][0]
+
+        self.assertEqual(chart_point["total_requests"], 10)
+        self.assertEqual(chart_point["input_tpm"], 800)
+        self.assertEqual(chart_point["total_input_tokens"], 800)
+        self.assertEqual(chart_point["latency_p90"], 1.15)
+        self.assertEqual(chart_point["ttft_p90"], 0.3)
+        self.assertEqual(chart_point["decode_p99"], 1.0)
 
     def test_pdf_path_is_derived_from_summary_path(self):
         self.assertEqual(
@@ -529,19 +662,31 @@ class MetricsAccumulatorTest(unittest.TestCase):
             "matrix_report_20260101_010101.pdf",
         )
 
-    def test_ensure_pdf_report_reuses_existing_file(self):
+    def test_ensure_pdf_report_refreshes_existing_file_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             pdf_path = Path(tmp) / "report.pdf"
             pdf_path.write_bytes(b"%PDF cached")
 
-            path = ensure_pdf_report(
-                summary={"config": {}, "results": {}},
-                details_path=None,
-                charts_path=None,
-                output_path=pdf_path,
-            )
+            rendered_paths = []
 
-        self.assertEqual(path, pdf_path)
+            def fake_render(_html, target):
+                rendered_paths.append(target)
+                target.write_bytes(b"%PDF refreshed")
+                return target
+
+            with patch("backend.app.core.pdf_report.render_pdf_file_sync", side_effect=fake_render):
+                path = ensure_pdf_report(
+                    summary={"config": {}, "results": {}},
+                    details_path=None,
+                    charts_path=None,
+                    output_path=pdf_path,
+                )
+
+            self.assertEqual(path, pdf_path)
+            self.assertEqual(pdf_path.read_bytes(), b"%PDF refreshed")
+            self.assertEqual(len(rendered_paths), 1)
+            self.assertNotEqual(rendered_paths[0], pdf_path)
+            self.assertFalse(rendered_paths[0].exists())
 
     def test_retry_metrics_inclusive_for_failed_results(self):
         config = LoadTestConfig(duration_sec=10, warmup_requests=0)

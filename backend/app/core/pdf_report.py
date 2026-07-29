@@ -4,11 +4,14 @@ import asyncio
 import html
 import json
 import math
+import os
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
 from backend.app.core.report_service import build_chart_data
+from loadtest import build_matrix_chart_data
 
 
 PDF_RENDER_ERROR = (
@@ -44,9 +47,10 @@ def render_pdf_html(summary: dict[str, Any], charts: dict[str, Any] | None = Non
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; color: #111827; font-family: Arial, "Microsoft YaHei", sans-serif; background: #fff; }}
     h1 {{ margin: 0 0 6px; font-size: 26px; }}
-    h2 {{ margin: 22px 0 10px; font-size: 18px; }}
-    h3 {{ margin: 16px 0 8px; font-size: 14px; }}
+    h2 {{ margin: 22px 0 10px; font-size: 18px; break-after: avoid; }}
+    h3 {{ margin: 16px 0 8px; font-size: 14px; break-after: avoid; }}
     .muted {{ color: #4b5563; font-size: 12px; }}
+    .notice {{ margin: 10px 0; padding: 10px 12px; border-left: 4px solid #f59e0b; background: #fffbeb; color: #92400e; font-size: 11px; break-inside: avoid; }}
     .header {{ padding-bottom: 14px; border-bottom: 2px solid #111827; }}
     .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }}
     .grid-3 {{ grid-template-columns: repeat(3, 1fr); }}
@@ -56,6 +60,8 @@ def render_pdf_html(summary: dict[str, Any], charts: dict[str, Any] | None = Non
     table {{ width: 100%; border-collapse: collapse; font-size: 11px; break-inside: avoid; }}
     th, td {{ padding: 7px 8px; border: 1px solid #d1d5db; text-align: left; }}
     th {{ background: #f3f4f6; font-weight: 700; }}
+    .matrix-table {{ table-layout: fixed; font-size: 9px; }}
+    .matrix-table th, .matrix-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
     .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
     .chart-card {{ padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; break-inside: avoid; }}
     .chart-title {{ margin-bottom: 8px; color: #111827; font-size: 13px; font-weight: 700; }}
@@ -113,11 +119,16 @@ def ensure_pdf_report(
     charts_path: str | None,
     output_path: Path,
 ) -> Path:
-    if output_path.exists() and output_path.stat().st_size > 0:
-        return output_path
     charts = build_chart_data(summary, details_path, charts_path=charts_path)
     html_text = render_pdf_html(summary, charts)
-    return render_pdf_file_sync(html_text, output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        render_pdf_file_sync(html_text, temp_path)
+        os.replace(temp_path, output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return output_path
 
 
 def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
@@ -137,6 +148,7 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
     {_header(cfg, "LLM API 压测报告")}
     <h2>核心指标</h2>{_cards(cards)}
     <h2>测试配置</h2>{_config_table(cfg)}
+    <h2>请求指标</h2>{_request_table(res)}
     <h2>缓存表现</h2>{_cache_table(res)}
     <h2>图表</h2>
     <div class="charts">
@@ -145,15 +157,18 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
       {_chart_card("TTFT / Decode", _dual_hist_svg(charts.get("ttft_histogram") or {}, charts.get("decode_histogram") or {}))}
       {_chart_card("错误分布", _pie_svg(charts.get("error_counts") or res.get("error_counts") or {}))}
     </div>
-    <h2>延迟分布</h2>{_latency_table(res)}
+    <h2>延迟分布</h2>{_latency_notice(cfg, res)}{_latency_table(res)}
     <h2>吞吐指标</h2>{_throughput_table(res)}
+    <h2>Token 汇总</h2>{_token_table(res)}
+    <h2>状态码分布</h2>{_distribution_table(res.get("status_counts") or {}, "无状态码数据")}
+    <h2>错误类型分布</h2>{_distribution_table(res.get("error_counts") or {}, "无错误")}
     """
 
 
 def _render_matrix_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
     cfg = summary.get("config") or {}
     points = summary.get("results_matrix") or []
-    matrix_points = charts.get("matrix_points") or []
+    matrix_points = _matrix_points(points, charts.get("matrix_points") or [])
     best_tpm = max([_metric(point, "total_tpm") for point in matrix_points] or [0])
     best_cache_tpm = max([_metric(point, "cache_inclusive_tpm", "total_tpm") for point in matrix_points] or [0])
     best_hit = max([_metric(point, "cache_hit_rate") for point in matrix_points] or [0])
@@ -172,8 +187,24 @@ def _render_matrix_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
       {_chart_card("TPM 热力图", _heatmap_svg(matrix_points, "total_tpm"))}
       {_chart_card("缓存命中率热力图", _heatmap_svg(matrix_points, "cache_hit_rate", ratio=True))}
     </div>
-    <h2>矩阵测试点</h2>{_matrix_table(matrix_points)}
+    <h2>矩阵测试点</h2>
+    <h3>吞吐与成功率</h3>{_matrix_request_table(matrix_points)}<h4>Token 吞吐</h4>{_matrix_throughput_table(matrix_points)}
+    <h3>Token 与缓存</h3>{_matrix_token_table(matrix_points)}
+    <h3>延迟分布</h3>{_latency_notice(cfg, {"ttft_samples": sum(1 for point in matrix_points if point.get("ttft_avg") is not None)})}{_matrix_latency_table(matrix_points)}
     """
+
+
+def _matrix_points(results_matrix: list[dict[str, Any]], cached_points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    derived = build_matrix_chart_data(results_matrix).get("matrix_points") if results_matrix else []
+    by_key = {
+        (point.get("input_tokens"), point.get("concurrency")): dict(point)
+        for point in cached_points
+    }
+    for point in derived:
+        key = (point.get("input_tokens"), point.get("concurrency"))
+        target = by_key.setdefault(key, {})
+        target.update({field: value for field, value in point.items() if value is not None})
+    return list(by_key.values())
 
 
 def _header(cfg: dict[str, Any], title: str) -> str:
@@ -216,14 +247,37 @@ def _cache_table(res: dict[str, Any]) -> str:
     ])
 
 
+def _request_table(res: dict[str, Any]) -> str:
+    return _rows_table([
+        ("总请求", _num(res.get("total_requests"))),
+        ("成功请求", _num(res.get("successful_requests"))),
+        ("失败请求", _num(res.get("failed_requests"))),
+        ("成功率", _percent(res.get("success_rate"))),
+        ("QPS", _num(res.get("qps"))),
+        ("RPM", _num(res.get("rpm"))),
+    ])
+
+
 def _latency_table(res: dict[str, Any]) -> str:
-    rows = []
-    for prefix, label in [("latency_sec", "总延迟"), ("ttft_sec", "TTFT"), ("decode_sec", "Decode")]:
-        rows.append((
-            label,
-            f"Avg {_seconds(res.get(f'{prefix}_avg'))} / P50 {_seconds(res.get(f'{prefix}_p50'))} / P95 {_seconds(res.get(f'{prefix}_p95'))} / P99 {_seconds(res.get(f'{prefix}_p99'))}",
-        ))
-    return _rows_table(rows)
+    head = "<tr><th>指标</th><th>Avg</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr>"
+    rows = "".join(
+        "<tr>"
+        f"<th>{_esc(label)}</th>"
+        + "".join(f"<td>{_seconds(res.get(f'{prefix}_{field}'))}</td>" for field in ["avg", "p50", "p90", "p95", "p99"])
+        + "</tr>"
+        for prefix, label in [("latency_sec", "总延迟"), ("ttft_sec", "TTFT"), ("decode_sec", "Decode")]
+    )
+    return f"<table>{head}{rows}</table>"
+
+
+def _latency_notice(cfg: dict[str, Any], res: dict[str, Any]) -> str:
+    if not cfg.get("enable_stream"):
+        text = "非流式模式无法准确测量 TTFT / Decode；相关字段显示为不可用，请以总延迟、吞吐和错误分布为准。"
+    elif not res or not res.get("ttft_samples"):
+        text = "未采集到有效首 Token 样本；TTFT / Decode 缺失字段显示为不可用。"
+    else:
+        return ""
+    return f'<div class="notice">{_esc(text)}</div>'
 
 
 def _throughput_table(res: dict[str, Any]) -> str:
@@ -231,23 +285,82 @@ def _throughput_table(res: dict[str, Any]) -> str:
         ("Input TPM", _num(res.get("input_tpm"))),
         ("Output TPM", _num(res.get("output_tpm"))),
         ("Total TPM", _num(res.get("total_tpm"))),
+        ("含缓存 TPM", _num(res.get("cache_inclusive_tpm"))),
+        ("缓存命中 TPM", _num(res.get("cache_hit_tpm"))),
+        ("缓存命中率", _percent(res.get("cache_hit_rate"))),
         ("Input TPS", _num(res.get("input_tps"))),
         ("Output TPS", _num(res.get("output_tps"))),
         ("Total TPS", _num(res.get("total_tps"))),
     ])
 
 
-def _matrix_table(points: list[dict[str, Any]]) -> str:
-    head = "<tr><th>输入 Token</th><th>并发</th><th>RPM</th><th>TPM</th><th>含缓存 TPM</th><th>缓存命中率</th><th>成功率</th><th>P95</th></tr>"
+def _token_table(res: dict[str, Any]) -> str:
+    return _rows_table([
+        ("总输入 Token", _num(res.get("total_input_tokens"))),
+        ("总输出 Token", _num(res.get("total_output_tokens"))),
+        ("总 Token", _num(res.get("total_tokens"))),
+        ("缓存命中 Token", _num(res.get("total_cached_input_tokens"))),
+        ("缓存创建 Token", _num(res.get("total_cache_creation_input_tokens"))),
+        ("含缓存总 Token", _num(res.get("total_cache_inclusive_tokens"))),
+    ])
+
+
+def _matrix_request_table(points: list[dict[str, Any]]) -> str:
+    columns = [
+        ("输入 Token", "input_tokens", _num), ("并发", "concurrency", _num),
+        ("总请求", "total_requests", _num), ("成功", "successful_requests", _num),
+        ("失败", "failed_requests", _num), ("成功率", "success_rate", _percent),
+        ("QPS", "qps", _num), ("RPM", "rpm", _num),
+    ]
+    return _matrix_values_table(points, columns)
+
+
+def _matrix_throughput_table(points: list[dict[str, Any]]) -> str:
+    columns = [
+        ("输入 Token", "input_tokens", _num), ("并发", "concurrency", _num),
+        ("Input TPM", "input_tpm", _num), ("Output TPM", "output_tpm", _num),
+        ("Total TPM", "total_tpm", _num), ("含缓存 TPM", "cache_inclusive_tpm", _num),
+        ("命中 TPM", "cache_hit_tpm", _num), ("Total TPS", "total_tps", _num),
+    ]
+    return _matrix_values_table(points, columns)
+
+
+def _matrix_token_table(points: list[dict[str, Any]]) -> str:
+    columns = [
+        ("输入 Token", "input_tokens", _num), ("并发", "concurrency", _num),
+        ("总输入 Token", "total_input_tokens", _num), ("总输出 Token", "total_output_tokens", _num),
+        ("总 Token", "total_tokens", _num), ("命中 Token", "total_cached_input_tokens", _num),
+        ("创建 Token", "total_cache_creation_input_tokens", _num), ("含缓存 Token", "total_cache_inclusive_tokens", _num),
+    ]
+    return _matrix_values_table(points, columns)
+
+
+def _matrix_latency_table(points: list[dict[str, Any]]) -> str:
+    head = "<tr><th>输入 Token</th><th>并发</th><th>指标</th><th>Avg</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr>"
+    rows = []
+    for point in points:
+        for prefix, label in [("latency", "总延迟"), ("ttft", "TTFT"), ("decode", "Decode")]:
+            values = "".join(f"<td>{_seconds(point.get(f'{prefix}_{field}'))}</td>" for field in ["avg", "p50", "p90", "p95", "p99"])
+            rows.append(
+                f"<tr><td>{_num(point.get('input_tokens'))}</td><td>{_num(point.get('concurrency'))}</td>"
+                f"<th>{_esc(label)}</th>{values}</tr>"
+            )
+    return f'<table class="matrix-table">{head}{"".join(rows)}</table>'
+
+
+def _matrix_values_table(points: list[dict[str, Any]], columns: list[tuple[str, str, Any]]) -> str:
+    head = "<tr>" + "".join(f"<th>{_esc(label)}</th>" for label, _field, _formatter in columns) + "</tr>"
     rows = "".join(
-        "<tr>"
-        f"<td>{_num(p.get('input_tokens'))}</td><td>{_num(p.get('concurrency'))}</td><td>{_num(p.get('rpm'))}</td>"
-        f"<td>{_num(p.get('total_tpm'))}</td><td>{_num(_metric(p, 'cache_inclusive_tpm', 'total_tpm'))}</td>"
-        f"<td>{_percent(p.get('cache_hit_rate'))}</td><td>{_percent(p.get('success_rate'))}</td><td>{_seconds(p.get('latency_p95'))}</td>"
-        "</tr>"
-        for p in points
+        "<tr>" + "".join(f"<td>{formatter(point.get(field))}</td>" for _label, field, formatter in columns) + "</tr>"
+        for point in points
     )
-    return f"<table>{head}{rows}</table>"
+    return f'<table class="matrix-table">{head}{rows}</table>'
+
+
+def _distribution_table(counts: dict[str, Any], empty_text: str) -> str:
+    if not counts:
+        return f'<div class="muted">{_esc(empty_text)}</div>'
+    return _rows_table([(str(key), _num(value)) for key, value in sorted(counts.items())])
 
 
 def _rows_table(rows: list[tuple[str, Any]]) -> str:
@@ -379,6 +492,8 @@ def _float(value: Any) -> float:
 
 
 def _num(value: Any) -> str:
+    if value is None:
+        return "不可用"
     number = _float(value)
     if abs(number) >= 1000:
         return f"{number:,.0f}"
@@ -397,10 +512,14 @@ def _compact(value: Any) -> str:
 
 
 def _percent(value: Any) -> str:
+    if value is None:
+        return "不可用"
     return f"{_float(value) * 100:.2f}%"
 
 
 def _seconds(value: Any) -> str:
+    if value is None:
+        return "不可用"
     return f"{_float(value):.4f}s"
 
 
