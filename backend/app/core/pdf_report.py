@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from backend.app.core.report_service import build_chart_data
+from backend.app.core.report_service import build_chart_data, load_request_results
 from loadtest import build_matrix_chart_data
 
 
@@ -31,12 +31,17 @@ def pdf_path_for_result(summary_path: str | None, fallback_dir: Path) -> Path:
     return fallback_dir / "report.pdf"
 
 
-def render_pdf_html(summary: dict[str, Any], charts: dict[str, Any] | None = None) -> str:
+def render_pdf_html(
+    summary: dict[str, Any],
+    charts: dict[str, Any] | None = None,
+    *,
+    details: list[Any] | None = None,
+) -> str:
     charts = charts or {}
     if summary.get("matrix"):
         body = _render_matrix_body(summary, charts)
     else:
-        body = _render_single_body(summary, charts)
+        body = _render_single_body(summary, charts, details or [])
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -62,6 +67,17 @@ def render_pdf_html(summary: dict[str, Any], charts: dict[str, Any] | None = Non
     th {{ background: #f3f4f6; font-weight: 700; }}
     .matrix-table {{ table-layout: fixed; font-size: 9px; }}
     .matrix-table th, .matrix-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
+    .detail-table {{ table-layout: fixed; font-size: 9px; }}
+    .detail-table th, .detail-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
+    .detail-table thead {{ display: table-header-group; }}
+    .detail-table tr {{ break-inside: avoid; }}
+    .detail-table th:nth-child(1) {{ width: 6%; }}
+    .detail-table th:nth-child(2) {{ width: 10%; }}
+    .detail-table th:nth-child(3) {{ width: 10%; }}
+    .detail-table th:nth-child(4), .detail-table th:nth-child(5), .detail-table th:nth-child(6) {{ width: 11%; }}
+    .detail-table th:nth-child(7) {{ width: 10%; }}
+    .detail-table th:nth-child(8) {{ width: 10%; }}
+    .detail-table th:nth-child(9) {{ width: 8%; }}
     .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
     .chart-card {{ padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; break-inside: avoid; }}
     .chart-title {{ margin-bottom: 8px; color: #111827; font-size: 13px; font-weight: 700; }}
@@ -120,7 +136,8 @@ def ensure_pdf_report(
     output_path: Path,
 ) -> Path:
     charts = build_chart_data(summary, details_path, charts_path=charts_path)
-    html_text = render_pdf_html(summary, charts)
+    details = load_request_results(details_path)
+    html_text = render_pdf_html(summary, charts, details=details)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -131,7 +148,7 @@ def ensure_pdf_report(
     return output_path
 
 
-def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
+def _render_single_body(summary: dict[str, Any], charts: dict[str, Any], details: list[Any]) -> str:
     cfg = summary.get("config") or {}
     res = summary.get("results") or {}
     cards = [
@@ -147,6 +164,7 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
     return f"""
     {_header(cfg, "LLM API 压测报告")}
     <h2>核心指标</h2>{_cards(cards)}
+    <h2>压测结果汇总</h2>{_single_summary_table(cfg, res, details)}
     <h2>测试配置</h2>{_config_table(cfg)}
     <h2>请求指标</h2>{_request_table(res)}
     <h2>缓存表现</h2>{_cache_table(res)}
@@ -162,6 +180,7 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
     <h2>Token 汇总</h2>{_token_table(res)}
     <h2>状态码分布</h2>{_distribution_table(res.get("status_counts") or {}, "无状态码数据")}
     <h2>错误类型分布</h2>{_distribution_table(res.get("error_counts") or {}, "无错误")}
+    {_single_detail_section(details, cfg)}
     """
 
 
@@ -258,6 +277,147 @@ def _request_table(res: dict[str, Any]) -> str:
     ])
 
 
+def _detail_value(item: Any, field: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(field, default)
+    return getattr(item, field, default)
+
+
+def _detail_decode(item: Any) -> float | None:
+    latency = _detail_value(item, "latency_sec")
+    ttft = _detail_value(item, "ttft_sec")
+    if latency is None or ttft is None:
+        return None
+    try:
+        latency_value = float(latency)
+        ttft_value = float(ttft)
+    except (TypeError, ValueError):
+        return None
+    if latency_value < 0 or ttft_value < 0 or ttft_value > latency_value:
+        return None
+    return latency_value - ttft_value
+
+
+def _detail_cache_hit_rate(item: Any) -> float | None:
+    cached = _detail_value(item, "cached_input_tokens")
+    created = _detail_value(item, "cache_creation_input_tokens", 0) or 0
+    input_tokens = _detail_value(item, "input_tokens")
+    try:
+        cached_value = float(cached or 0)
+        created_value = float(created)
+        input_value = float(input_tokens or 0)
+    except (TypeError, ValueError):
+        return None
+    denominator = max(input_value, cached_value + created_value)
+    return cached_value / denominator if denominator > 0 else 0.0
+
+
+def _detail_tps(item: Any) -> float | None:
+    decode = _detail_decode(item)
+    if decode is None or decode <= 0:
+        return None
+    try:
+        return float(_detail_value(item, "output_tokens", 0) or 0) / decode
+    except (TypeError, ValueError):
+        return None
+
+
+def _detail_summary(details: list[Any]) -> dict[str, Any]:
+    successful = [item for item in details if _detail_value(item, "ok") is True]
+    ttfts = [_detail_value(item, "ttft_sec") for item in successful if _detail_value(item, "ttft_sec") is not None]
+    tps_values = [value for item in successful if (value := _detail_tps(item)) is not None]
+    return {
+        "successful": successful,
+        "ttft_avg": sum(ttfts) / len(ttfts) if ttfts else None,
+        "ttft_p95": _percentile_value(ttfts, 0.95),
+        "tps_avg": sum(tps_values) / len(tps_values) if tps_values else None,
+    }
+
+
+def _percentile_value(values: list[Any], percentile: float) -> float | None:
+    numbers = sorted(float(value) for value in values if value is not None)
+    if not numbers:
+        return None
+    if len(numbers) == 1:
+        return numbers[0]
+    index = (len(numbers) - 1) * percentile
+    lower = int(index)
+    upper = min(lower + 1, len(numbers) - 1)
+    return numbers[lower] + (numbers[upper] - numbers[lower]) * (index - lower)
+
+
+def _single_summary_table(cfg: dict[str, Any], res: dict[str, Any], details: list[Any]) -> str:
+    derived = _detail_summary(details)
+    scene = "单次测试"
+    if cfg.get("matrix_mode"):
+        scene = f"{_num(cfg.get('input_tokens_target'))} × {_num(cfg.get('concurrency'))}"
+    ttft_avg = res.get("ttft_sec_avg") if res.get("ttft_sec_avg") is not None else derived["ttft_avg"]
+    ttft_p95 = res.get("ttft_sec_p95") if res.get("ttft_sec_p95") is not None else derived["ttft_p95"]
+    tps_avg = derived["tps_avg"] if derived["tps_avg"] is not None else res.get("total_tps")
+    rows = [[
+        scene,
+        cfg.get("model"),
+        _percent(res.get("success_rate")),
+        _num(res.get("total_input_tokens")),
+        _num(res.get("total_output_tokens")),
+        _percent(res.get("cache_hit_rate")),
+        _seconds(res.get("latency_sec_avg")),
+        _seconds(res.get("latency_sec_p50")),
+        _seconds(res.get("latency_sec_p90")),
+        _seconds(res.get("latency_sec_p95")),
+        _seconds(ttft_avg),
+        _seconds(ttft_p95),
+        _num(tps_avg),
+    ]]
+    headers = ["场景", "模型", "成功率", "实际输入 Token", "实际输出 Token", "实际 Cache 命中率", "延迟 Avg", "延迟 P50", "延迟 P90", "延迟 P95", "TTFT Avg", "TTFT P95", "TPS Avg"]
+    return _data_table(headers, rows, css_class="matrix-table")
+
+
+def _single_detail_section(details: list[Any], cfg: dict[str, Any]) -> str:
+    success = [item for item in details if _detail_value(item, "ok") is True]
+    failures = [item for item in details if _detail_value(item, "ok") is not True]
+    rows = []
+    for item in success:
+        rows.append([
+            _detail_value(item, "request_id"),
+            _seconds(_detail_value(item, "latency_sec")),
+            _seconds(_detail_value(item, "ttft_sec")),
+            _num(_detail_value(item, "input_tokens")),
+            _num(_detail_value(item, "output_tokens")),
+            _num(_detail_value(item, "cached_input_tokens")),
+            _percent(_detail_cache_hit_rate(item)),
+            _num(_detail_tps(item)),
+        ])
+    headers = ["#", "总延迟(s)", "TTFT(s)", "输入 tokens", "输出 tokens", "命中 tokens", "命中率", "TPS"]
+    detail_table = _data_table(headers, rows, css_class="detail-table") if rows else '<div class="muted">暂无成功样本，明细不可用</div>'
+    failure_text = _failure_summary(failures)
+    notice = _latency_notice(cfg, {"ttft_samples": sum(1 for item in success if _detail_value(item, "ttft_sec") is not None)})
+    return f'<h2>单次请求明细</h2>{notice}{detail_table}{failure_text}'
+
+
+def _failure_summary(failures: list[Any]) -> str:
+    if not failures:
+        return '<div class="muted">失败样本：0 条</div>'
+    groups: dict[str, list[str]] = {}
+    for item in failures:
+        key = _detail_value(item, "error_type") or f"HTTP_{_detail_value(item, 'status')}"
+        request_id = _detail_value(item, "request_id")
+        groups.setdefault(str(key), []).append(str(request_id))
+    rows = []
+    for key, request_ids in groups.items():
+        matching = [item for item in failures if str(_detail_value(item, "error_type") or f"HTTP_{_detail_value(item, 'status')}") == key]
+        message = next((_detail_value(item, "error_message") for item in matching if _detail_value(item, "error_message")), "-")
+        statuses = ", ".join(sorted({str(_detail_value(item, "status")) for item in matching}))
+        rows.append([statuses or "-", key, message, f"请求 #{'/#'.join(request_ids)}"])
+    return f'<h3>失败样本：{len(failures)} 条</h3>{_data_table(["状态码", "失败原因", "错误信息", "请求编号"], rows)}'
+
+
+def _data_table(headers: list[str], rows: list[list[Any]], *, css_class: str = "") -> str:
+    head = "<tr>" + "".join(f"<th>{_esc(value)}</th>" for value in headers) + "</tr>"
+    body = "".join("<tr>" + "".join(f"<td>{_esc(value)}</td>" for value in row) + "</tr>" for row in rows)
+    return f'<table class="{css_class}"><thead>{head}</thead><tbody>{body}</tbody></table>'
+
+
 def _latency_table(res: dict[str, Any]) -> str:
     head = "<tr><th>指标</th><th>Avg</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr>"
     rows = "".join(
@@ -320,7 +480,8 @@ def _matrix_throughput_table(points: list[dict[str, Any]]) -> str:
         ("输入 Token", "input_tokens", _num), ("并发", "concurrency", _num),
         ("Input TPM", "input_tpm", _num), ("Output TPM", "output_tpm", _num),
         ("Total TPM", "total_tpm", _num), ("含缓存 TPM", "cache_inclusive_tpm", _num),
-        ("命中 TPM", "cache_hit_tpm", _num), ("Total TPS", "total_tps", _num),
+        ("命中 TPM", "cache_hit_tpm", _num), ("Input TPS", "input_tps", _num),
+        ("Output TPS", "output_tps", _num), ("Total TPS", "total_tps", _num),
     ]
     return _matrix_values_table(points, columns)
 
@@ -328,6 +489,7 @@ def _matrix_throughput_table(points: list[dict[str, Any]]) -> str:
 def _matrix_token_table(points: list[dict[str, Any]]) -> str:
     columns = [
         ("输入 Token", "input_tokens", _num), ("并发", "concurrency", _num),
+        ("缓存命中率", "cache_hit_rate", _percent),
         ("总输入 Token", "total_input_tokens", _num), ("总输出 Token", "total_output_tokens", _num),
         ("总 Token", "total_tokens", _num), ("命中 Token", "total_cached_input_tokens", _num),
         ("创建 Token", "total_cache_creation_input_tokens", _num), ("含缓存 Token", "total_cache_inclusive_tokens", _num),

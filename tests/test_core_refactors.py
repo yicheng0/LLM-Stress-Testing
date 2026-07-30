@@ -236,6 +236,16 @@ class MetricsSummaryTest(unittest.TestCase):
         )
 
 
+class FrontendConfigTest(unittest.TestCase):
+    def test_beginner_target_estimator_exposes_streaming_ttft_toggle(self):
+        source = (Path(__file__).resolve().parents[1] / "frontend/src/components/ConfigForm.vue").read_text(encoding="utf-8")
+
+        self.assertIn('class="target-stream-option"', source)
+        self.assertIn('流式模式（TTFT）', source)
+        self.assertIn('v-model="form.enable_stream"', source)
+        self.assertIn('当前关闭流式，报告无法采集 TTFT / Decode', source)
+
+
 class ReportLatencyBackfillTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def task(*, enable_stream: bool = True) -> DbTestTask:
@@ -710,6 +720,14 @@ class MetricsAccumulatorTest(unittest.TestCase):
         self.assertIn("0.3000s", html)
         self.assertIn("HTTP_429", html)
         self.assertGreaterEqual(html.count("<svg"), 4)
+
+    def test_single_pdf_contains_request_result_tables(self):
+        html = render_pdf_html(
+            {"config": {"enable_stream": True, "model": "glm-5"}, "results": {"success_rate": 1}},
+            details=[result(request_id=1, cached_input_tokens=50, input_tokens=100, output_tokens=20)],
+        )
+        for label in ("压测结果汇总", "实际 Cache 命中率", "TPS Avg", "单次请求明细", "命中率", "TPS"):
+            self.assertIn(label, html)
 
     def test_pdf_latency_distinguishes_missing_values_from_real_zero(self):
         summary = {

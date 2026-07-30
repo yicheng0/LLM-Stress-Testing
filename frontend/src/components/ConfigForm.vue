@@ -365,6 +365,21 @@
                 />
               </el-form-item>
             </div>
+            <div v-if="!isExpertMode" class="target-stream-option">
+              <div>
+                <strong>流式模式（TTFT）</strong>
+                <span>开启后通过流式响应采集首 Token 延迟 TTFT 和 Decode。</span>
+              </div>
+              <el-switch v-model="form.enable_stream" active-text="开启" inactive-text="关闭" />
+            </div>
+            <el-alert
+              v-if="!isExpertMode && !form.enable_stream"
+              title="当前关闭流式，报告无法采集 TTFT / Decode"
+              description="如需测试首 Token 延迟，请开启流式模式后再启动测试。"
+              type="warning"
+              show-icon
+              :closable="false"
+            />
             <div class="target-summary-grid">
               <div>
                 <span>目标 RPM</span>
@@ -2129,6 +2144,33 @@ function reset() {
   gap: 12px;
 }
 
+.target-stream-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.target-stream-option > div {
+  display: grid;
+  gap: 4px;
+}
+
+.target-stream-option strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.target-stream-option span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .target-mode-row {
   display: flex;
   align-items: center;
@@ -2618,6 +2660,11 @@ function reset() {
   }
 
   .target-mode-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .target-stream-option {
     align-items: flex-start;
     flex-direction: column;
   }
