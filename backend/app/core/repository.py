@@ -96,6 +96,10 @@ class Repository:
         )
         with self.session() as db:
             db.add(task)
+            # Ensure the parent task row is flushed before inserting FK children.
+            flush = getattr(db, "flush", None)
+            if flush:
+                flush()
             db.add(TestResult(task_id=task_id))
             db.commit()
             db.refresh(task)
