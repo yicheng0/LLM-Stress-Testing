@@ -125,6 +125,8 @@ def _custom_case_expected_metrics(
 def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
     if not summary:
         return {}
+    if summary.get("task_kind") == "cache_diagnostics":
+        return {}
     if summary.get("matrix"):
         points = summary.get("results_matrix") or []
         if not points:
@@ -226,6 +228,7 @@ def _dashboard_task_item(
     error_message = result.error_message if result else None
     task_item = {
         "id": task.id,
+        "task_kind": config.get("task_kind", "load_test"),
         "name": task.name,
         "prompt_source": config.get("prompt_source", "synthetic"),
         "custom_prompt": config.get("custom_prompt"),
@@ -403,6 +406,7 @@ def _task_out(
     config = _config(task)
     return TestTaskOut(
         id=task.id,
+        task_kind=config.get("task_kind", "load_test"),
         owner_username=task.owner_username,
         owner_role=task.owner_role,
         name=task.name,
@@ -632,8 +636,8 @@ async def realtime_dashboard(
     recent_tasks = []
 
     for task, result in snapshot["active_rows"]:
-        _, metric_item, targets, is_active = _dashboard_task_item(task, result, progress_hub, active_statuses)
-        if is_active:
+        task_item, metric_item, targets, is_active = _dashboard_task_item(task, result, progress_hub, active_statuses)
+        if is_active and task_item["task_kind"] != "cache_diagnostics":
             metric_sources.append(metric_item)
             target_sources.append(targets)
 
@@ -844,12 +848,12 @@ async def get_report(
         _summary(result),
         result.details_jsonl_path if result else None,
         enable_stream=bool(config.get("enable_stream", task.enable_stream)),
-    )
+    ) if config.get("task_kind") != "cache_diagnostics" else _summary(result)
     charts = build_chart_data(
         summary,
         result.details_jsonl_path if result else None,
         charts_path=result.charts_path if result else None,
-    )
+    ) if config.get("task_kind") != "cache_diagnostics" else {}
     files = {
         "summary": result.summary_path if result else None,
         "details": result.details_jsonl_path if result else None,
@@ -947,12 +951,13 @@ async def download_report(
         summary = _safe_load_summary(result) or _summary_from_file(result)
         if not summary:
             raise HTTPException(status_code=404, detail="报告文件不存在")
-        summary = await asyncio.to_thread(
-            backfill_stream_latency_metrics,
-            summary,
-            result.details_jsonl_path,
-            enable_stream=bool(_config(task).get("enable_stream", task.enable_stream)),
-        )
+        if _config(task).get("task_kind") != "cache_diagnostics":
+            summary = await asyncio.to_thread(
+                backfill_stream_latency_metrics,
+                summary,
+                result.details_jsonl_path,
+                enable_stream=bool(_config(task).get("enable_stream", task.enable_stream)),
+            )
         output_path = _safe_output_file(pdf_path_for_result(result.summary_path, settings.results_dir))
         if not output_path:
             raise HTTPException(status_code=404, detail="报告文件不存在")

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.auth import router as auth_router
+from backend.app.api.cache_diagnostics import router as cache_diagnostics_router
 from backend.app.api.docs import router as docs_router
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(cache_diagnostics_router)
 app.include_router(tests_router)
 app.include_router(docs_router)
 app.include_router(websocket_router)

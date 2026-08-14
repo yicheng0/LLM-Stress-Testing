@@ -5,6 +5,8 @@ const routes = [
   { path: '/', redirect: '/tests/new' },
   { path: '/login', name: 'login', component: () => import('../views/Login.vue'), meta: { public: true } },
   { path: '/tests/new', name: 'new-test', component: () => import('../views/NewTest.vue') },
+  { path: '/tests/cache-diagnostics', name: 'cache-diagnostics', component: () => import('../views/CacheDiagnostics.vue') },
+  { path: '/tests/cache-diagnostics/:id', name: 'cache-diagnostics-result', component: () => import('../views/CacheDiagnosticsResult.vue'), props: true },
   { path: '/tests/custom-case', name: 'custom-case', component: () => import('../views/CustomCase.vue'), meta: { roles: ['root'] } },
   { path: '/tests/:id/run', name: 'run-test', component: () => import('../views/RunTest.vue'), props: true },
   { path: '/tests/:id/report', name: 'test-report', component: () => import('../views/Report.vue'), props: true },

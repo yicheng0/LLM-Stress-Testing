@@ -7,12 +7,13 @@ from uuid import uuid4
 
 from backend.app.config import settings
 from backend.app.core.auth import AuthUser
+from backend.app.core.cache_diagnostics import CacheDiagnosticsRunner, redact_cache_text
 from backend.app.core.progress import ProgressHub
 from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
 from backend.app.core.task_status import TaskStatus, stopped_final_status
 from backend.app.core.test_runner import WebLoadTestRunner
-from backend.app.models.schemas import TestCreate
+from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate
 
 
 def _parse_csv_ints(value: str, field_name: str) -> list[int]:
@@ -63,6 +64,27 @@ class TaskManager:
 
     async def start_test(self, payload: TestCreate, owner: AuthUser) -> str:
         return await self._start_test(payload, owner=owner)
+
+    async def start_cache_diagnostics(self, payload: CacheDiagnosticsCreate, owner: AuthUser) -> str:
+        if self.running_count() >= settings.max_running_tests:
+            raise ValueError(f"同时运行任务数不能超过 {settings.max_running_tests}")
+        try:
+            preflight = await validate_api_credentials(_model_dump(payload))
+        except PreflightError as exc:
+            raise ValueError(redact_cache_text(str(exc), payload.api_key)) from exc
+        safe_preflight_message = redact_cache_text(preflight.message, payload.api_key)
+        if not preflight.ok:
+            raise ValueError(safe_preflight_message or "API Key 无效或无权限，无法启动测试")
+
+        task_id = str(uuid4())
+        self.repository.create_task(task_id, payload, owner)
+        self.repository.add_event(task_id, "info", "缓存专项任务已创建")
+        self.repository.add_event(task_id, "info", safe_preflight_message)
+        stop_event = asyncio.Event()
+        self.stop_events[task_id] = stop_event
+        task = asyncio.create_task(self._run_cache_diagnostics(task_id, _model_dump(payload), stop_event))
+        self.tasks[task_id] = task
+        return task_id
 
     async def resume_matrix_test(
         self,
@@ -208,6 +230,62 @@ class TaskManager:
             await self.progress_hub.publish_status(task_id, final_status)
         except Exception as exc:
             message = str(exc)
+            self.repository.save_result(task_id, error_message=message)
+            self.repository.update_task_status(task_id, TaskStatus.FAILED.value, completed_at=datetime.utcnow())
+            self.repository.add_event(task_id, "error", message)
+            await self.progress_hub.publish_status(task_id, TaskStatus.FAILED.value)
+            await self.progress_hub.publish_log(task_id, "error", message)
+        finally:
+            self.stop_events.pop(task_id, None)
+            self.stop_reasons.pop(task_id, None)
+            self.tasks.pop(task_id, None)
+
+    async def _run_cache_diagnostics(
+        self,
+        task_id: str,
+        config: dict[str, Any],
+        stop_event: asyncio.Event,
+    ) -> None:
+        async def on_progress(data: dict[str, Any]) -> None:
+            await self.progress_hub.publish_progress(task_id, data)
+
+        async def on_log(level: str, message: str) -> None:
+            self.repository.add_event(task_id, level, message)
+            await self.progress_hub.publish_log(task_id, level, message)
+
+        try:
+            self.repository.update_task_status(task_id, TaskStatus.RUNNING.value, started_at=datetime.utcnow())
+            self.repository.add_event(task_id, "info", "缓存专项任务开始运行")
+            await self.progress_hub.publish_status(task_id, TaskStatus.RUNNING.value)
+            runner = CacheDiagnosticsRunner(
+                config,
+                settings.results_dir / task_id,
+                progress_callback=on_progress,
+                log_callback=on_log,
+                stop_event=stop_event,
+            )
+            result = await runner.run()
+            files = result["files"]
+            self.repository.save_result(
+                task_id,
+                summary=result["summary"],
+                summary_path=files["summary_path"],
+                details_jsonl_path=files["details_jsonl_path"],
+                report_md_path=files["report_md_path"],
+                report_html_path=files["report_html_path"],
+                matrix_csv_path=files["matrix_csv_path"],
+                charts_path=files["charts_path"],
+                detail_count=files.get("detail_count"),
+            )
+            final_status = stopped_final_status(
+                self.stop_reasons.get(task_id) == "user_requested",
+                TaskStatus.COMPLETED.value,
+            )
+            self.repository.update_task_status(task_id, final_status, completed_at=datetime.utcnow())
+            self.repository.add_event(task_id, "info", f"缓存专项任务已{final_status}")
+            await self.progress_hub.publish_status(task_id, final_status)
+        except Exception as exc:
+            message = redact_cache_text(str(exc), str(config.get("api_key") or ""))
             self.repository.save_result(task_id, error_message=message)
             self.repository.update_task_status(task_id, TaskStatus.FAILED.value, completed_at=datetime.utcnow())
             self.repository.add_event(task_id, "error", message)

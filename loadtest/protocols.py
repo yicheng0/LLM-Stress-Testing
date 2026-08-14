@@ -41,6 +41,19 @@ def normalize_gemini_stream_endpoint(endpoint: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def normalize_gemini_endpoint_mode(endpoint: str, enable_stream: bool) -> str:
+    parts = urlsplit(endpoint)
+    path = parts.path
+    if enable_stream:
+        path = path.replace(":generateContent", ":streamGenerateContent")
+        query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "alt"]
+        query.append(("alt", "sse"))
+    else:
+        path = path.replace(":streamGenerateContent", ":generateContent")
+        query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "alt"]
+    return urlunsplit((parts.scheme, parts.netloc, path, urlencode(query), parts.fragment))
+
+
 def normalize_endpoint(endpoint: str, protocol: str) -> str:
     endpoint = (endpoint or "").strip() or default_endpoint(protocol)
     endpoint = normalize_gemini_stream_endpoint(endpoint) if protocol == "gemini" else endpoint
@@ -157,6 +170,70 @@ def build_payload(
     return payload
 
 
+def build_messages_payload(
+    protocol: str,
+    *,
+    endpoint: str,
+    model: str,
+    messages: list[dict[str, str]],
+    max_output_tokens: int,
+    temperature: float | None,
+    enable_stream: bool,
+    cache_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Build a protocol payload for cache diagnostics without changing load-test payloads."""
+    if protocol == "gemini":
+        contents = []
+        for message in messages:
+            role = "model" if message.get("role") == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": str(message.get("content") or "")}]})
+        generation_config: dict[str, Any] = {"maxOutputTokens": max_output_tokens}
+        if temperature is not None:
+            generation_config["temperature"] = temperature
+        return {"contents": contents, "generationConfig": generation_config}
+
+    if protocol == "anthropic":
+        anthropic_messages: list[dict[str, Any]] = []
+        for message in messages:
+            content = str(message.get("content") or "")
+            rendered: str | list[dict[str, Any]] = content
+            if cache_prefix and content.startswith(cache_prefix):
+                rendered = [{"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}]
+                suffix = content[len(cache_prefix):]
+                if suffix:
+                    rendered.append({"type": "text", "text": suffix})
+            anthropic_messages.append({"role": message.get("role", "user"), "content": rendered})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": max_output_tokens,
+            "stream": enable_stream,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        return payload
+
+    if normalize_endpoint(endpoint, "openai").endswith("/responses"):
+        payload = {
+            "model": model,
+            "input": messages,
+            "max_output_tokens": max_output_tokens,
+            "stream": enable_stream,
+        }
+    else:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_output_tokens,
+            "stream": enable_stream,
+        }
+        if enable_stream:
+            payload["stream_options"] = {"include_usage": True}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
+
+
 def build_headers(protocol: str, *, api_key: str, anthropic_version: str = "2023-06-01") -> dict[str, str]:
     if protocol == "gemini":
         return {"x-goog-api-key": api_key, "Content-Type": "application/json"}
@@ -173,6 +250,8 @@ def build_url(base_url: str, endpoint: str, protocol: str, *, model: str | None 
     spec = protocol_spec(protocol)
     if protocol == "gemini" and (not endpoint or endpoint in LEGACY_DEFAULT_ENDPOINTS):
         endpoint = spec.default_endpoint(enable_stream)
+    if protocol == "gemini":
+        endpoint = normalize_gemini_endpoint_mode(endpoint, enable_stream)
     return build_request_url(base_url, endpoint, protocol, model=model)
 
 
@@ -192,6 +271,15 @@ def _nested_int(data: dict[str, Any], *path: str) -> int:
             return 0
         current = current.get(key)
     return _to_int(current)
+
+
+def _has_path(data: dict[str, Any], *path: str) -> bool:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return False
+        current = current[key]
+    return True
 
 
 def extract_token_usage(usage: dict) -> TokenUsage:
@@ -224,6 +312,23 @@ def extract_token_usage(usage: dict) -> TokenUsage:
         _to_int(usage.get("prompt_cache_miss_tokens")),
         _to_int(usage.get("cache_miss_input_tokens")),
     )
+    cache_usage_observed = any([
+        _has_path(usage, "prompt_tokens_details", "cached_tokens"),
+        _has_path(usage, "input_tokens_details", "cached_tokens"),
+        "cachedContentTokenCount" in usage,
+        "cache_read_input_tokens" in usage,
+        "cache_creation_input_tokens" in usage,
+        "cache_write_tokens" in usage,
+        "cached_input_tokens" in usage,
+        "cached_input_tokens_creation" in usage,
+        "prompt_cache_hit_tokens" in usage,
+        "prompt_cache_miss_tokens" in usage,
+        "cache_miss_input_tokens" in usage,
+    ])
+    cache_tokens_additive = any(
+        key in usage
+        for key in ("cache_read_input_tokens", "cache_creation_input_tokens", "cache_write_tokens")
+    )
 
     total_tokens_from_usage = total_tokens > 0
     if total_tokens <= 0 and (input_tokens or output_tokens):
@@ -247,17 +352,52 @@ def extract_token_usage(usage: dict) -> TokenUsage:
         cache_inclusive_total_tokens = total_tokens
 
     return TokenUsage(
+        input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         cached_input_tokens=cached_input_tokens,
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_inclusive_total_tokens=cache_inclusive_total_tokens,
+        cache_usage_observed=cache_usage_observed,
+        cache_tokens_additive=cache_tokens_additive,
     )
 
 
 def extract_tokens(usage: dict) -> tuple[int, int]:
     parsed = extract_token_usage(usage)
     return parsed.output_tokens, parsed.total_tokens
+
+
+def extract_response_text(data: Any) -> str:
+    if isinstance(data, str):
+        return data.strip()
+    if isinstance(data, list):
+        return "".join(filter(None, (extract_response_text(item) for item in data)))
+    if not isinstance(data, dict):
+        return ""
+
+    for key in ("output_text", "text", "completion", "delta"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    choices = data.get("choices")
+    if isinstance(choices, list):
+        text = "".join(extract_response_text(choice) for choice in choices)
+        if text:
+            return text
+
+    candidates = data.get("candidates")
+    if isinstance(candidates, list):
+        text = "".join(extract_response_text(candidate) for candidate in candidates)
+        if text:
+            return text
+
+    for key in ("message", "content", "parts", "output", "response", "content_block"):
+        text = extract_response_text(data.get(key))
+        if text:
+            return text
+    return ""
 
 
 def extract_protocol_error(data: Any) -> str | None:

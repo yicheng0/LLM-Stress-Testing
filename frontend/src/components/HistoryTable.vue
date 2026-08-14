@@ -3,6 +3,9 @@
     <el-table class="history-desktop-table" :data="items" v-loading="loading" border @selection-change="$emit('selection-change', $event)">
       <el-table-column type="selection" width="46" />
       <el-table-column prop="name" label="测试名称" min-width="190" show-overflow-tooltip />
+      <el-table-column label="任务类型" width="105">
+        <template #default="{ row }"><el-tag effect="plain">{{ taskKindText(row) }}</el-tag></template>
+      </el-table-column>
       <el-table-column label="协议" width="150">
         <template #default="{ row }">{{ protocolText(row.api_protocol) }}</template>
       </el-table-column>
@@ -39,7 +42,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="run" :icon="Monitor">运行页</el-dropdown-item>
-                <el-dropdown-item command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
+                <el-dropdown-item v-if="!isCacheDiagnostics(row)" command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
                 <el-dropdown-item v-if="canResumeMatrix(row)" command="resume-matrix" :icon="RefreshRight">续跑矩阵</el-dropdown-item>
                 <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
               </el-dropdown-menu>
@@ -59,6 +62,7 @@
           <el-tag :type="healthStatusType(row)" effect="plain">{{ healthStatusText(row) }}</el-tag>
         </div>
         <div class="mobile-card-meta">
+          <span>{{ taskKindText(row) }}</span>
           <span>{{ protocolText(row.api_protocol) }}</span>
           <span>{{ row.model || '-' }}</span>
           <span>{{ number(row.concurrency) }} 并发</span>
@@ -86,7 +90,7 @@
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="run" :icon="Monitor">运行页</el-dropdown-item>
-                  <el-dropdown-item command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
+                  <el-dropdown-item v-if="!isCacheDiagnostics(row)" command="copy" :icon="CopyDocument">复跑</el-dropdown-item>
                   <el-dropdown-item v-if="canResumeMatrix(row)" command="resume-matrix" :icon="RefreshRight">续跑矩阵</el-dropdown-item>
                   <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
@@ -186,7 +190,15 @@ function handleCommand(command, row) {
 }
 
 function canResumeMatrix(row) {
-  return Boolean(row.matrix_mode && isTerminalTaskStatus(row.status))
+  return Boolean(!isCacheDiagnostics(row) && row.matrix_mode && isTerminalTaskStatus(row.status))
+}
+
+function isCacheDiagnostics(row) {
+  return row.task_kind === 'cache_diagnostics'
+}
+
+function taskKindText(row) {
+  return isCacheDiagnostics(row) ? '缓存专项' : '负载测试'
 }
 
 function isMobileSelected(row) {

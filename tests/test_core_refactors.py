@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from backend.app.api import tests as tests_api
 from backend.app.core.auth import AuthUser
+from backend.app.core.cache_diagnostics import CacheDiagnosticsRunner, build_cache_case, build_cache_prefix, classify_cache_case, redact_cache_text
 from backend.app.core.task_status import (
     TaskStatus,
     can_transition_task_status,
@@ -29,14 +30,14 @@ from backend.app.core.doc_converter import CurlConvertError, convert_curl_to_ope
 from backend.app.core.task_manager import TaskManager
 from backend.app.models.database import TestResult as DbTestResult
 from backend.app.models.database import TestTask as DbTestTask
-from backend.app.models.schemas import CustomCaseBatchCase, CustomCaseBatchChannel, CustomCaseBatchRequest, TestCreate
+from backend.app.models.schemas import CacheDiagnosticsCreate, CustomCaseBatchCase, CustomCaseBatchChannel, CustomCaseBatchRequest, TestCreate
 from loadtest.chart_data import build_matrix_chart_data, build_single_chart_data
 from loadtest.config import LoadTestConfig
 from loadtest.executor import RequestExecutor
 from loadtest.metrics import percentile, percentile_metrics
 from loadtest.runner import LoadTestRunner, matrix_result_key, should_reuse_matrix_result
-from loadtest.models import RequestResult
-from loadtest.protocols import build_payload, extract_token_usage
+from loadtest.models import RequestResult, TokenUsage
+from loadtest.protocols import build_messages_payload, build_payload, build_url, extract_token_usage
 from loadtest.reports import generate_matrix_csv, render_html_report, render_markdown_report, render_matrix_report
 from loadtest.result_writer import ReportArtifactWriter, StreamingResultCollector
 from loadtest.streaming import SseStreamParser
@@ -2205,6 +2206,7 @@ class StreamParserTest(unittest.IsolatedAsyncioTestCase):
                 return generator()
 
         chunks = [
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
             b"data: {\"usage\":{\"completion_tokens\":3",
             b",\"prompt_tokens\":2,\"total_tokens\":5}}\n",
             b"data: [DONE]\n",
@@ -2230,6 +2232,7 @@ class StreamParserTest(unittest.IsolatedAsyncioTestCase):
                 return generator()
 
         chunks = [
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
             b"data: {\"usage\":{\"completion_tokens\":3,\"prompt_tokens\":2,",
             b"\"total_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":2}}}\n",
             b"data: [DONE]\n",
@@ -2242,6 +2245,46 @@ class StreamParserTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage.cached_input_tokens, 2)
         self.assertEqual(usage.cache_inclusive_total_tokens, 5)
         self.assertIsNone(protocol_error)
+
+    async def test_stream_usage_supports_responses_and_anthropic_split_usage(self):
+        parser = SseStreamParser()
+
+        class FakeContent:
+            def __init__(self, chunks): self._chunks = chunks
+            def iter_any(self):
+                async def generator():
+                    for chunk in self._chunks: yield chunk
+                return generator()
+
+        responses_chunks = [
+            b'data: {"type":"response.output_text.delta","delta":"OK"}\n',
+            b'data: {"response":{"usage":{"input_tokens":100,"output_tokens":2,"total_tokens":102,"input_tokens_details":{"cached_tokens":80}}}}\n',
+        ]
+        ttft, usage, _error = await parser.parse_stream_usage(FakeContent(responses_chunks), time.perf_counter())
+        self.assertIsNotNone(ttft)
+        self.assertEqual((usage.input_tokens, usage.output_tokens, usage.cached_input_tokens), (100, 2, 80))
+
+        anthropic_chunks = [
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":20,"cache_read_input_tokens":80,"cache_creation_input_tokens":5}}}\n',
+            b'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"OK"}}\n',
+            b'data: {"type":"message_delta","usage":{"output_tokens":3}}\n',
+        ]
+        _ttft, usage, _error = await parser.parse_stream_usage(FakeContent(anthropic_chunks), time.perf_counter())
+        self.assertEqual((usage.input_tokens, usage.output_tokens, usage.total_tokens), (20, 3, 23))
+        self.assertEqual(usage.cache_inclusive_total_tokens, 108)
+
+    async def test_usage_only_stream_has_no_ttft(self):
+        parser = SseStreamParser()
+
+        class FakeContent:
+            def iter_any(self):
+                async def generator():
+                    yield b'data: {"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n'
+                return generator()
+
+        ttft, usage, _error = await parser.parse_stream_usage(FakeContent(), time.perf_counter())
+        self.assertIsNone(ttft)
+        self.assertEqual(usage.total_tokens, 3)
 
 
 class RequestExecutorCacheTest(unittest.TestCase):
@@ -2550,6 +2593,98 @@ class CurlDocConverterTest(unittest.TestCase):
         self.assertEqual(converted.unknown_params, [])
         self.assertIn('"unsupportedVendorField": true', converted.sanitized_curl)
         self.assertIn('"Imopat": "enabled"', converted.sanitized_curl)
+
+
+class CacheDiagnosticsFeatureTest(unittest.TestCase):
+    def test_cache_usage_observation_distinguishes_missing_from_zero(self):
+        observed_zero = extract_token_usage({"prompt_tokens_details": {"cached_tokens": 0}})
+        missing = extract_token_usage({"prompt_tokens": 100, "completion_tokens": 10})
+
+        self.assertTrue(observed_zero.cache_usage_observed)
+        self.assertEqual(observed_zero.cached_input_tokens, 0)
+        self.assertFalse(missing.cache_usage_observed)
+        self.assertEqual(extract_token_usage({"prompt_tokens": 123}).input_tokens, 123)
+
+    def test_cache_cases_preserve_required_message_relationships(self):
+        prefix, actual_tokens = build_cache_prefix("gpt-5.5")
+        repeat = build_cache_case("repeat", prefix)
+        multiturn = build_cache_case("multiturn", prefix)
+        suffix = build_cache_case("variable_suffix", prefix)
+
+        self.assertGreaterEqual(actual_tokens, 4000)
+        self.assertEqual(repeat.prepare_messages, repeat.validate_messages)
+        self.assertEqual(multiturn.validate_messages[:1], multiturn.prepare_messages)
+        self.assertGreater(len(multiturn.validate_messages), len(multiturn.prepare_messages))
+        self.assertTrue(suffix.prepare_messages[0]["content"].startswith(prefix))
+        self.assertTrue(suffix.validate_messages[0]["content"].startswith(prefix))
+        self.assertNotEqual(suffix.prepare_messages, suffix.validate_messages)
+
+    def test_cache_case_classification_has_four_outcomes(self):
+        successful = {"ok": True}
+        self.assertEqual(classify_cache_case({"ok": False}, None), ("failed", "prepare"))
+        self.assertEqual(classify_cache_case(successful, {"ok": False}), ("failed", "validate"))
+        self.assertEqual(
+            classify_cache_case(successful, {"ok": True, "cache": {"observed": False}}),
+            ("unverifiable", None),
+        )
+        self.assertEqual(
+            classify_cache_case(successful, {"ok": True, "cache": {"observed": True, "cached_input_tokens": 0}}),
+            ("cache_miss", None),
+        )
+        self.assertEqual(
+            classify_cache_case(successful, {"ok": True, "cache": {"observed": True, "cached_input_tokens": 10}}),
+            ("cache_hit", None),
+        )
+
+    def test_cache_diagnostics_payloads_only_mark_anthropic_prefix(self):
+        prefix, _ = build_cache_prefix("gpt-5.5")
+        messages = build_cache_case("variable_suffix", prefix).prepare_messages
+        anthropic = build_messages_payload(
+            "anthropic", endpoint="/messages", model="claude", messages=messages,
+            max_output_tokens=16, temperature=0, enable_stream=True, cache_prefix=prefix,
+        )
+        openai = build_messages_payload(
+            "openai", endpoint="/chat/completions", model="gpt", messages=messages,
+            max_output_tokens=16, temperature=0, enable_stream=True, cache_prefix=prefix,
+        )
+        gemini = build_messages_payload(
+            "gemini", endpoint="/models/m:generateContent", model="m", messages=messages,
+            max_output_tokens=16, temperature=0, enable_stream=False, cache_prefix=prefix,
+        )
+
+        self.assertEqual(anthropic["messages"][0]["content"][0]["cache_control"], {"type": "ephemeral"})
+        self.assertNotIn("cache_control", json.dumps(openai))
+        self.assertNotIn("cache_control", json.dumps(gemini))
+        self.assertIn(":generateContent", build_url("https://example.com", "/v1beta/models/{model-name}:streamGenerateContent?alt=sse", "gemini", model="m", enable_stream=False))
+        self.assertIn(":streamGenerateContent", build_url("https://example.com", "/v1beta/models/{model-name}:generateContent", "gemini", model="m", enable_stream=True))
+
+    def test_cache_diagnostics_redacts_exact_api_key(self):
+        self.assertEqual(redact_cache_text("upstream echoed custom-secret-value", "custom-secret-value"), "upstream echoed [REDACTED]")
+
+    def test_cache_diagnostics_schema_defaults_and_pdf(self):
+        payload = CacheDiagnosticsCreate(api_key="secret")
+        self.assertEqual(payload.case_ids, ["repeat", "multiturn", "variable_suffix"])
+        summary = {
+            "task_kind": "cache_diagnostics",
+            "config": {
+                "name": "缓存专项测试", "api_protocol": "openai", "model": "gpt",
+                "endpoint": "/chat/completions", "base_url": "https://example.com",
+                "enable_stream": True, "max_output_tokens": 16,
+                "case_ids": payload.case_ids, "cache_prefix_target_tokens": 4096,
+                "cache_prefix_actual_tokens": 4096,
+            },
+            "results": {"total_cases": 1, "cache_hit_cases": 1, "cache_miss_cases": 0, "unverifiable_cases": 0, "failed_cases": 0},
+            "cases": [{
+                "case_name": "缓存命中-重复请求", "description": "same", "status": "cache_hit", "failure_phase": None,
+                "prepare": {"ok": True, "status": 200, "latency_sec": 1, "ttft_sec": None, "input_tokens": 4096, "output_tokens": 1, "total_tokens": 4097, "cache": {"observed": True, "cached_input_tokens": 0, "cache_creation_input_tokens": 4096, "cache_inclusive_total_tokens": 4097, "cache_hit_rate": 0}},
+                "validate": {"ok": True, "status": 200, "latency_sec": 0, "ttft_sec": 0, "input_tokens": 4096, "output_tokens": 1, "total_tokens": 4097, "cache": {"observed": True, "cached_input_tokens": 4096, "cache_creation_input_tokens": 0, "cache_inclusive_total_tokens": 4097, "cache_hit_rate": 1}},
+            }],
+        }
+        html_text = render_pdf_html(summary)
+        for label in ("缓存专项测试报告", "缓存命中-重复请求", "准备请求", "验证请求", "缓存创建", "不可用", "0.0000s"):
+            self.assertIn(label, html_text)
+        self.assertNotIn("吞吐指标", html_text)
+        self.assertNotIn("容量推荐", html_text)
 
 
 if __name__ == "__main__":

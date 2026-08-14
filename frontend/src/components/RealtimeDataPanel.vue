@@ -185,12 +185,18 @@
               </span>
               <span class="activity-runtime">{{ runtimeText(item) }}</span>
               <span class="activity-metrics">
-                <span><strong>{{ number(item.rpm) }}</strong><em>RPM</em></span>
-                <span><strong>{{ number(item.tpm) }}</strong><em>TPM</em></span>
-                <span><strong>{{ number(item.cache_inclusive_tpm) }}</strong><em>含缓存 TPM</em></span>
-                <span><strong>{{ number(item.cache_hit_tpm) }}</strong><em>缓存命中 TPM</em></span>
-                <span><strong>{{ percent(item.success_rate) }}</strong><em>成功率</em></span>
-                <span><strong>{{ seconds(item.latency_p95) }}</strong><em>P95</em></span>
+                <template v-if="item.task_kind === 'cache_diagnostics'">
+                  <span><strong>缓存专项</strong><em>任务类型</em></span>
+                  <span><strong>{{ statusText(item.status) }}</strong><em>执行状态</em></span>
+                </template>
+                <template v-else>
+                  <span><strong>{{ number(item.rpm) }}</strong><em>RPM</em></span>
+                  <span><strong>{{ number(item.tpm) }}</strong><em>TPM</em></span>
+                  <span><strong>{{ number(item.cache_inclusive_tpm) }}</strong><em>含缓存 TPM</em></span>
+                  <span><strong>{{ number(item.cache_hit_tpm) }}</strong><em>缓存命中 TPM</em></span>
+                  <span><strong>{{ percent(item.success_rate) }}</strong><em>成功率</em></span>
+                  <span><strong>{{ seconds(item.latency_p95) }}</strong><em>P95</em></span>
+                </template>
               </span>
             </button>
           </div>
@@ -599,6 +605,10 @@ function taskPriority(a, b) {
 }
 
 function goTask(item) {
+  if (item.task_kind === 'cache_diagnostics') {
+    router.push(`/tests/cache-diagnostics/${item.id}`)
+    return
+  }
   if (isTerminalTaskStatus(item.status)) {
     router.push(`/tests/${item.id}/report`)
     return
@@ -612,7 +622,7 @@ function handleDiagnosticAction(type) {
     return
   }
   if (type === 'open_report' && latestReportTask.value) {
-    router.push(`/tests/${latestReportTask.value.id}/report`)
+    goTask(latestReportTask.value)
     return
   }
   activityTileEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })

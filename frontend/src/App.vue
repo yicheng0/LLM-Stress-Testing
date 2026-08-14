@@ -99,7 +99,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, DataAnalysis, Document, DocumentAdd, EditPen, Menu, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
+import { Clock, Coin, DataAnalysis, Document, DocumentAdd, EditPen, Menu, Plus, Refresh, TrendCharts } from '@element-plus/icons-vue'
 import { useAuthStore } from './stores/auth'
 
 const route = useRoute()
@@ -110,6 +110,7 @@ const isStandaloneLayout = computed(() => Boolean(route.meta?.printLayout || rou
 const mobileNavOpen = ref(false)
 const navItems = [
   { index: '/tests/new', label: '新建测试', icon: Plus },
+  { index: '/tests/cache-diagnostics', label: '缓存专项测试', icon: Coin },
   { index: '/tests/custom-case', label: '自定义 Case', icon: EditPen },
   { index: '/history', label: '历史记录', icon: Clock },
   { index: '/help/parameters', label: '参数说明', icon: Document },
@@ -131,11 +132,14 @@ const activePath = computed(() => {
   if (route.path.startsWith('/dashboard')) return '/dashboard/realtime'
   if (route.path.startsWith('/docs')) return '/docs/curl-to-openapi'
   if (route.path.startsWith('/tests/custom-case')) return '/tests/custom-case'
+  if (route.path.startsWith('/tests/cache-diagnostics')) return '/tests/cache-diagnostics'
   return '/tests/new'
 })
 const routeTitle = computed(() => route.meta?.title || {
   'new-test': '新建测试',
   'custom-case': '自定义输入诊断',
+  'cache-diagnostics': '缓存专项测试',
+  'cache-diagnostics-result': '缓存专项结果',
   'run-test': '实时运行',
   'test-report': '报告详情',
   history: '历史记录',

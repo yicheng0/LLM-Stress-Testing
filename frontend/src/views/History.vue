@@ -81,8 +81,8 @@
         v-else
         :items="store.items"
         :loading="store.loading"
-        @run="row => router.push(`/tests/${row.id}/run`)"
-        @report="row => router.push(`/tests/${row.id}/report`)"
+        @run="openRun"
+        @report="openReport"
         @copy="copyRerun"
         @resume-matrix="confirmResumeMatrix"
         @delete="confirmDelete"
@@ -120,7 +120,7 @@ const store = useTestsStore()
 const { createdRange, reload, syncDateRange, resetFilters } = useHistoryFilters(store)
 const selectedRows = ref([])
 const bulkDeleting = ref(false)
-const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4)
+const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4 && selectedRows.value.every((row) => row.task_kind !== 'cache_diagnostics'))
 const canExport = computed(() => selectedRows.value.length === 1)
 const canBulkDelete = computed(() => selectedRows.value.length > 0)
 const expiredCount = computed(() => store.items.filter((item) => isExpired(item)).length)
@@ -234,6 +234,10 @@ function handleSelectionChange(rows) {
 }
 
 function copyRerun(row) {
+  if (row.task_kind === 'cache_diagnostics') {
+    router.push('/tests/cache-diagnostics')
+    return
+  }
   const copied = {
     name: `${row.name} - 复跑`,
     base_url: row.base_url,
@@ -255,9 +259,17 @@ function copyRerun(row) {
   router.push(copied.prompt_source === 'custom' ? '/tests/custom-case' : '/tests/new')
 }
 
+function openRun(row) {
+  router.push(row.task_kind === 'cache_diagnostics' ? `/tests/cache-diagnostics/${row.id}` : `/tests/${row.id}/run`)
+}
+
+function openReport(row) {
+  router.push(row.task_kind === 'cache_diagnostics' ? `/tests/cache-diagnostics/${row.id}` : `/tests/${row.id}/report`)
+}
+
 function goCompare() {
   if (!canCompare.value) {
-    ElMessage.warning('请选择 2-4 条记录进行对比')
+    ElMessage.warning(selectedRows.value.some((row) => row.task_kind === 'cache_diagnostics') ? '缓存专项任务不参与普通压测对比' : '请选择 2-4 条记录进行对比')
     return
   }
   router.push(`/compare?ids=${selectedRows.value.map((item) => item.id).join(',')}`)

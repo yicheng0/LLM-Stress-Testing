@@ -70,6 +70,17 @@ export function createCustomCaseBatch(payload) {
   })
 }
 
+export function createCacheDiagnostics(payload) {
+  return request('/api/cache-diagnostics', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+export function getCacheDiagnostics(id) {
+  return request(`/api/cache-diagnostics/${id}`)
+}
+
 export function listTests(params = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

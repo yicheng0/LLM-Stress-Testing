@@ -14,7 +14,7 @@ from backend.app.config import settings
 from backend.app.core.auth import AuthUser
 from backend.app.core.task_status import ACTIVE_TASK_STATUSES, TaskStatus, normalize_task_status
 from backend.app.models.database import SessionLocal, TestEvent, TestResult, TestTask
-from backend.app.models.schemas import TestCreate
+from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate
 
 
 SENSITIVE_TEXT_PATTERNS = [
@@ -72,7 +72,7 @@ class Repository:
     def session(self) -> Session:
         return SessionLocal()
 
-    def create_task(self, task_id: str, payload: TestCreate, owner: AuthUser) -> TestTask:
+    def create_task(self, task_id: str, payload: TestCreate | CacheDiagnosticsCreate, owner: AuthUser) -> TestTask:
         data = _with_prompt_metadata(_redact_sensitive(_model_dump(payload)))
         now = datetime.utcnow()
         task = TestTask(

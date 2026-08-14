@@ -38,7 +38,9 @@ def render_pdf_html(
     details: list[Any] | None = None,
 ) -> str:
     charts = charts or {}
-    if summary.get("matrix"):
+    if summary.get("task_kind") == "cache_diagnostics":
+        body = _render_cache_diagnostics_body(summary)
+    elif summary.get("matrix"):
         body = _render_matrix_body(summary, charts)
     else:
         body = _render_single_body(summary, charts, details or [])
@@ -141,7 +143,7 @@ def ensure_pdf_report(
     charts_path: str | None,
     output_path: Path,
 ) -> Path:
-    charts = build_chart_data(summary, details_path, charts_path=charts_path)
+    charts = {} if summary.get("task_kind") == "cache_diagnostics" else build_chart_data(summary, details_path, charts_path=charts_path)
     details = _load_pdf_details(details_path)
     html_text = render_pdf_html(summary, charts, details=details)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +206,83 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any], details
     <h2>状态码分布</h2>{_distribution_table(res.get("status_counts") or {}, "无状态码数据")}
     <h2>错误类型分布</h2>{_distribution_table(res.get("error_counts") or {}, "无错误")}
     {_single_detail_section(details, cfg)}
+    """
+
+
+def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
+    cfg = summary.get("config") or {}
+    results = summary.get("results") or {}
+    cards = [
+        ("Case 总数", _num(results.get("total_cases")), "固定场景串行执行", ""),
+        ("缓存命中", _num(results.get("cache_hit_cases")), "验证请求命中 Token > 0", "ok"),
+        ("未命中缓存", _num(results.get("cache_miss_cases")), "明确返回缓存字段且命中为 0", "warn"),
+        ("无法判定", _num(results.get("unverifiable_cases")), "上游未返回缓存字段", "warn"),
+        ("执行失败", _num(results.get("failed_cases")), "准备或验证请求失败", "danger"),
+    ]
+    config_rows = [
+        ["测试名称", cfg.get("name") or "缓存专项测试", "协议", cfg.get("api_protocol")],
+        ["模型", cfg.get("model"), "Endpoint", cfg.get("endpoint")],
+        ["流式", "开启" if cfg.get("enable_stream") else "关闭", "最大输出 Token", _num(cfg.get("max_output_tokens"))],
+        ["公共前缀目标", f"{_num(cfg.get('cache_prefix_target_tokens'))} Token", "公共前缀实际", f"{_num(cfg.get('cache_prefix_actual_tokens'))} Token"],
+        ["选中 Case", "、".join(cfg.get("case_ids") or []), "接入域名", cfg.get("base_url")],
+    ]
+    case_sections = []
+    status_labels = {
+        "cache_hit": "缓存命中",
+        "cache_miss": "未命中缓存",
+        "unverifiable": "无法判定",
+        "failed": "执行失败",
+    }
+    for case in summary.get("cases") or []:
+        evidence_rows = []
+        for phase, label in (("prepare", "准备请求"), ("validate", "验证请求")):
+            item = case.get(phase)
+            if not item:
+                evidence_rows.append([label, "未执行", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "-"])
+                continue
+            cache = item.get("cache") or {}
+            evidence_rows.append([
+                label,
+                "成功" if item.get("ok") else "失败",
+                _num(item.get("status")),
+                _seconds(item.get("latency_sec")),
+                _seconds(item.get("ttft_sec")),
+                _num(item.get("input_tokens")),
+                _num(item.get("output_tokens")),
+                _num(item.get("total_tokens")),
+                _num(cache.get("cached_input_tokens")) if cache.get("observed") else "不可用",
+                _num(cache.get("cache_creation_input_tokens")) if cache.get("observed") else "不可用",
+                _num(cache.get("cache_inclusive_total_tokens")),
+                _percent(cache.get("cache_hit_rate")) if cache.get("observed") else "不可用",
+                " · ".join(part for part in [item.get("error_type"), item.get("error_message")] if part) or "-",
+            ])
+        headers = ["阶段", "结果", "状态码", "总延迟", "TTFT", "输入", "输出", "总 Token", "缓存命中", "缓存创建", "含缓存", "命中率", "错误"]
+        failure = case.get("failure_phase")
+        meta = f"判定：{status_labels.get(case.get('status'), case.get('status'))}"
+        if failure:
+            meta += f" · 失败阶段：{'准备请求' if failure == 'prepare' else '验证请求'}"
+        case_sections.append(
+            f"<h2>{html.escape(str(case.get('case_name') or '缓存 Case'))}</h2>"
+            f"<div class='muted'>{html.escape(meta)} · {html.escape(str(case.get('description') or ''))}</div>"
+            f"{_data_table(headers, evidence_rows, css_class='matrix-table detail-table')}"
+        )
+    notice = (
+        '<div class="notice">判定仅依据上游返回的缓存用量字段：命中 Token 大于 0 为“缓存命中”；'
+        '明确返回缓存字段但命中为 0 为“未命中缓存”；未返回缓存字段为“无法判定”。不根据延迟或文本相似度推断。</div>'
+    )
+    cache_header = f"""
+    <div class="header">
+      <h1>缓存专项测试报告</h1>
+      <div class="muted">模型：{html.escape(str(cfg.get('model') or '-'))} · 协议：{html.escape(str(cfg.get('api_protocol') or '-'))} · Base URL：{html.escape(str(cfg.get('base_url') or '-'))}</div>
+      <div class="muted">流式：{'开启' if cfg.get('enable_stream') else '关闭'} · Case：{html.escape('、'.join(cfg.get('case_ids') or []))}</div>
+    </div>
+    """
+    return f"""
+    {cache_header}
+    <h2>执行摘要</h2>{_cards(cards)}
+    {notice}
+    <h2>测试配置</h2>{_data_table(["项目", "值", "项目", "值"], config_rows)}
+    {''.join(case_sections)}
     """
 
 

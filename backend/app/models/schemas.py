@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 TaskStatus = Literal["queued", "running", "stopping", "completed", "failed", "cancelled", "interrupted"]
 UserRole = Literal["root", "guest"]
+CacheDiagnosticCaseId = Literal["repeat", "multiturn", "variable_suffix"]
 
 
 class LoginRequest(BaseModel):
@@ -75,8 +76,47 @@ class TestCreate(BaseModel):
         return self
 
 
+class CacheDiagnosticsCreate(BaseModel):
+    name: str = Field(default="缓存专项测试", min_length=1, max_length=120)
+    api_protocol: Literal["openai", "anthropic", "gemini"] = "openai"
+    anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
+    api_key: str = Field(..., min_length=1)
+    model: str = Field(default="gpt-5.5", min_length=1)
+    endpoint: str = Field(default="/v1/chat/completions")
+    max_output_tokens: int = Field(default=128, ge=1, le=65536)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    timeout_sec: int = Field(default=600, ge=1)
+    connect_timeout_sec: int = Field(default=30, ge=1)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_base: float = Field(default=1.0, ge=0.0)
+    retry_backoff_max: float = Field(default=8.0, ge=0.0)
+    enable_stream: bool = True
+    case_ids: list[CacheDiagnosticCaseId] = Field(
+        default_factory=lambda: ["repeat", "multiturn", "variable_suffix"],
+        min_length=1,
+        max_length=3,
+    )
+    task_kind: Literal["cache_diagnostics"] = "cache_diagnostics"
+    concurrency: Literal[1] = 1
+    duration_sec: int = 1
+    input_tokens: int = 4096
+    matrix_mode: Literal[False] = False
+    cache_test_enabled: Literal[True] = True
+    cache_warmup_requests: Literal[0] = 0
+    warmup_requests: Literal[0] = 0
+
+    @model_validator(mode="after")
+    def normalize_cases(self) -> "CacheDiagnosticsCreate":
+        self.case_ids = list(dict.fromkeys(self.case_ids))
+        if not self.case_ids:
+            raise ValueError("至少选择一个缓存 Case")
+        return self
+
+
 class TestTaskOut(BaseModel):
     id: str
+    task_kind: str = "load_test"
     owner_username: str | None = None
     owner_role: str | None = None
     name: str
@@ -184,6 +224,19 @@ class EventOut(BaseModel):
     level: str
     message: str
     created_at: datetime
+
+
+class CacheDiagnosticsOut(BaseModel):
+    test_id: str
+    task_kind: Literal["cache_diagnostics"] = "cache_diagnostics"
+    task_status: str
+    config: dict[str, Any]
+    progress: dict[str, Any] | None = None
+    summary: dict[str, Any] | None = None
+    events: list[EventOut] = Field(default_factory=list)
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class ReportOut(BaseModel):
