@@ -100,7 +100,8 @@ class CacheDiagnosticsCreate(BaseModel):
     task_kind: Literal["cache_diagnostics"] = "cache_diagnostics"
     concurrency: Literal[1] = 1
     duration_sec: int = 1
-    input_tokens: int = 4096
+    input_tokens: int = Field(default=4096, ge=1)
+    requests_per_case: int = Field(default=10, ge=2, le=100)
     matrix_mode: Literal[False] = False
     cache_test_enabled: Literal[True] = True
     cache_warmup_requests: Literal[0] = 0

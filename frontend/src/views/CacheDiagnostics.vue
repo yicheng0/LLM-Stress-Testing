@@ -5,7 +5,7 @@
         <h2 class="section-title">缓存专项测试</h2>
         <p class="subtitle">独立验证重复请求、多轮对话和尾部变化是否产生真实缓存命中。</p>
       </div>
-      <el-tag effect="plain">固定 4096 Token 公共前缀</el-tag>
+      <el-tag effect="plain">可配置公共前缀与验证样本量</el-tag>
     </div>
     <div class="section-body">
       <el-alert
@@ -53,6 +53,12 @@
         <el-form-item label="最大输出 Token" prop="max_output_tokens">
           <el-input-number v-model="form.max_output_tokens" :min="1" :max="65536" controls-position="right" />
         </el-form-item>
+        <el-form-item label="公共前缀 Token" prop="input_tokens">
+          <el-input-number v-model="form.input_tokens" :min="1" :precision="0" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="每个 Case 请求次数" prop="requests_per_case">
+          <el-input-number v-model="form.requests_per_case" :min="2" :max="100" :precision="0" controls-position="right" />
+        </el-form-item>
         <el-form-item label="Temperature">
           <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" controls-position="right" />
         </el-form-item>
@@ -75,7 +81,7 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">缓存 Case</h2>
-          <p class="subtitle">默认全部执行；每个 Case 内依次发送准备请求和验证请求。</p>
+          <p class="subtitle">每个 Case 的第 1 次请求建立缓存；后续请求作为验证样本统计命中率。Case 内严格串行执行。</p>
         </div>
         <el-tag :type="form.case_ids.length ? 'success' : 'danger'" effect="plain">已选 {{ form.case_ids.length }} / 3</el-tag>
       </div>
@@ -93,6 +99,11 @@
           <em>{{ form.case_ids.includes(item.id) ? '已选择' : '点击选择' }}</em>
         </button>
       </div>
+      <div class="plan-copy">
+        已选 {{ form.case_ids.length }} 个 Case × 每 Case {{ form.requests_per_case }} 次 =
+        <strong>计划 {{ plannedRequests }} 次业务请求</strong>
+        <span>（失败重试不计入计划数）</span>
+      </div>
     </div>
 
     <div class="submit-row">
@@ -102,7 +113,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createCacheDiagnostics } from '../api/client'
@@ -123,6 +134,7 @@ const form = reactive({
   api_key: '', model: 'gpt-5.5', max_output_tokens: 128, temperature: 0,
   timeout_sec: 600, connect_timeout_sec: 30, max_retries: 2,
   retry_backoff_base: 1, retry_backoff_max: 8, enable_stream: true,
+  input_tokens: 4096, requests_per_case: 10,
   case_ids: ['repeat', 'multiturn', 'variable_suffix']
 })
 const rules = {
@@ -130,7 +142,20 @@ const rules = {
   base_url: [{ required: true, message: '请输入接入域名', trigger: 'blur' }],
   endpoint: [{ required: true, message: '请输入 Endpoint', trigger: 'blur' }],
   api_key: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
-  model: [{ required: true, message: '请输入模型名称', trigger: 'blur' }]
+  model: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
+  input_tokens: [{ validator: validatePositiveInteger, trigger: 'change' }],
+  requests_per_case: [{ validator: validateRequestsPerCase, trigger: 'change' }]
+}
+const plannedRequests = computed(() => form.case_ids.length * form.requests_per_case)
+
+function validatePositiveInteger(_rule, value, callback) {
+  if (Number.isInteger(value) && value > 0) callback()
+  else callback(new Error('公共前缀 Token 必须为正整数'))
+}
+
+function validateRequestsPerCase(_rule, value, callback) {
+  if (Number.isInteger(value) && value >= 2 && value <= 100) callback()
+  else callback(new Error('每个 Case 请求次数必须是 2 到 100 的整数'))
 }
 
 function toggleCase(id) {
@@ -192,6 +217,7 @@ async function submit() {
 .case-card strong { font-size: 16px; }
 .case-card span { color: #6b7280; line-height: 1.6; }
 .case-card em { align-self: end; color: #2563eb; font-style: normal; font-weight: 700; }
+.plan-copy { margin: 16px 0 0; color: #4b5563; font-size: 14px; }.plan-copy strong { color: #111827; }.plan-copy span { color: #6b7280; }
 .submit-row { display: flex; justify-content: flex-end; padding: 8px 0 24px; }
 @media (max-width: 768px) { .form-grid, .case-grid { grid-template-columns: 1fr; } }
 </style>

@@ -14,7 +14,16 @@ from fastapi import HTTPException
 
 from backend.app.api import tests as tests_api
 from backend.app.core.auth import AuthUser
-from backend.app.core.cache_diagnostics import CacheDiagnosticsRunner, build_cache_case, build_cache_prefix, classify_cache_case, redact_cache_text
+from backend.app.core.cache_diagnostics import (
+    CacheDiagnosticsRunner,
+    build_cache_case,
+    build_cache_prefix,
+    cache_case_requests,
+    classify_cache_case,
+    classify_cache_request,
+    redact_cache_text,
+    summarize_cache_case,
+)
 from backend.app.core.task_status import (
     TaskStatus,
     can_transition_task_status,
@@ -2596,6 +2605,43 @@ class CurlDocConverterTest(unittest.TestCase):
 
 
 class CacheDiagnosticsFeatureTest(unittest.TestCase):
+    def test_cache_diagnostics_volume_schema_boundaries(self):
+        payload = CacheDiagnosticsCreate(api_key="secret")
+        self.assertEqual((payload.input_tokens, payload.requests_per_case), (4096, 10))
+        for values in ({"input_tokens": 0}, {"requests_per_case": 1}, {"requests_per_case": 101}):
+            with self.assertRaises(ValueError):
+                CacheDiagnosticsCreate(api_key="secret", **values)
+
+    def test_cache_diagnostics_volume_aggregation_and_legacy_projection(self):
+        definition = build_cache_case("repeat", "prefix")
+        requests = [{"phase": "prepare", "ok": True, "request_index": 1}]
+        for index, classification in enumerate(
+            ["cache_hit"] * 6 + ["cache_miss"] * 2 + ["unverifiable"], start=2,
+        ):
+            requests.append({
+                "phase": "validate", "ok": True, "request_index": index,
+                "classification": classification,
+            })
+        case = summarize_cache_case("repeat", definition, requests, 10)
+        self.assertEqual(case["cache_hit_rate"], 0.75)
+        self.assertEqual((case["decidable_requests"], case["unverifiable_requests"]), (8, 1))
+
+        legacy = cache_case_requests({
+            "case_id": "repeat",
+            "prepare": {"ok": True, "cache": {"observed": True, "cached_input_tokens": 99}},
+            "validate": {"ok": True, "cache": {"observed": True, "cached_input_tokens": 0}},
+        })
+        self.assertEqual(len(legacy), 2)
+        self.assertIsNone(legacy[0]["classification"])
+        self.assertEqual(legacy[1]["classification"], "cache_miss")
+
+    def test_cache_request_classification_keeps_missing_and_zero_distinct(self):
+        self.assertIsNone(classify_cache_request("prepare", {"ok": True, "cache": {"observed": True, "cached_input_tokens": 5}}))
+        self.assertEqual(classify_cache_request("validate", {"ok": False}), "failed")
+        self.assertEqual(classify_cache_request("validate", {"ok": True, "cache": {"observed": False}}), "unverifiable")
+        self.assertEqual(classify_cache_request("validate", {"ok": True, "cache": {"observed": True, "cached_input_tokens": 0}}), "cache_miss")
+        self.assertEqual(classify_cache_request("validate", {"ok": True, "cache": {"observed": True, "cached_input_tokens": 1}}), "cache_hit")
+
     def test_cache_usage_observation_distinguishes_missing_from_zero(self):
         observed_zero = extract_token_usage({"prompt_tokens_details": {"cached_tokens": 0}})
         missing = extract_token_usage({"prompt_tokens": 100, "completion_tokens": 10})
@@ -2661,6 +2707,21 @@ class CacheDiagnosticsFeatureTest(unittest.TestCase):
     def test_cache_diagnostics_redacts_exact_api_key(self):
         self.assertEqual(redact_cache_text("upstream echoed custom-secret-value", "custom-secret-value"), "upstream echoed [REDACTED]")
 
+    def test_cache_diagnostics_runner_redacts_full_prefix_from_errors(self):
+        runner = CacheDiagnosticsRunner(
+            {"model": "gpt-5.5", "input_tokens": 4, "requests_per_case": 2, "api_key": "secret"},
+            Path("unused"),
+        )
+        messages = [{"role": "assistant", "content": "unique-model-reply"}]
+        error = runner._safe_error(f"echo {runner.prefix} secret unique-model-reply", messages)
+        self.assertNotIn(runner.prefix, error)
+        self.assertNotIn("unique-model-reply", error)
+
+    def test_cache_diagnostics_http_errors_do_not_persist_upstream_body(self):
+        source = Path("backend/app/core/cache_diagnostics.py").read_text(encoding="utf-8")
+        self.assertIn('error_message=f"上游返回 HTTP {response.status}"', source)
+        self.assertNotIn("error_message=self._safe_error(body[:1000]", source)
+
     def test_cache_diagnostics_schema_defaults_and_pdf(self):
         payload = CacheDiagnosticsCreate(api_key="secret")
         self.assertEqual(payload.case_ids, ["repeat", "multiturn", "variable_suffix"])
@@ -2685,6 +2746,64 @@ class CacheDiagnosticsFeatureTest(unittest.TestCase):
             self.assertIn(label, html_text)
         self.assertNotIn("吞吐指标", html_text)
         self.assertNotIn("容量推荐", html_text)
+
+    def test_cache_diagnostics_multi_request_pdf_contains_all_evidence(self):
+        requests = []
+        classifications = [None, "cache_hit", "cache_miss", "unverifiable"]
+        for index, classification in enumerate(classifications, start=1):
+            observed = classification in {"cache_hit", "cache_miss"}
+            requests.append({
+                "request_index": index,
+                "phase": "prepare" if index == 1 else "validate",
+                "phase_label": "缓存建立" if index == 1 else "缓存验证",
+                "classification": classification,
+                "ok": True,
+                "status": 200,
+                "latency_sec": 0,
+                "ttft_sec": None if index == 3 else 0,
+                "input_tokens": 1024,
+                "output_tokens": index,
+                "total_tokens": 1024 + index,
+                "cache": {
+                    "observed": observed,
+                    "cached_input_tokens": 10 if classification == "cache_hit" else 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_inclusive_total_tokens": 1024 + index,
+                    "cache_hit_rate": 0.01 if classification == "cache_hit" else 0,
+                },
+            })
+        summary = {
+            "task_kind": "cache_diagnostics",
+            "config": {
+                "name": "缓存专项测试", "api_protocol": "openai", "model": "gpt",
+                "endpoint": "/chat/completions", "base_url": "https://example.com",
+                "enable_stream": True, "max_output_tokens": 16, "case_ids": ["repeat"],
+                "cache_prefix_target_tokens": 1024, "cache_prefix_actual_tokens": 1030,
+                "requests_per_case": 4,
+            },
+            "results": {
+                "total_cases": 1, "planned_requests": 4, "executed_requests": 4,
+                "validation_requests": 3, "cache_hit_requests": 1, "cache_miss_requests": 1,
+                "unverifiable_requests": 1, "failed_requests": 0, "decidable_requests": 2,
+                "cache_hit_rate": 0.5,
+            },
+            "cases": [{
+                "case_id": "repeat", "case_name": "缓存命中-重复请求", "description": "same",
+                "status": "cache_hit", "planned_requests": 4, "executed_requests": 4,
+                "validation_requests": 3, "cache_hit_requests": 1, "cache_miss_requests": 1,
+                "unverifiable_requests": 1, "failed_requests": 0, "decidable_requests": 2,
+                "cache_hit_rate": 0.5, "requests": requests,
+            }],
+        }
+        html_text = render_pdf_html(summary)
+        for label in (
+            "公共前缀目标 Token", "每 Case 请求次数", "计划请求总数", "总体命中率",
+            "Case 命中率", "逐请求性能与 Token", "逐请求缓存与错误", "50.00%",
+            "缓存建立", "缓存验证", "不可用", "0.0000s",
+        ):
+            self.assertIn(label, html_text)
+        for index in range(1, 5):
+            self.assertIn(f"<td>{index}</td>", html_text)
 
 
 if __name__ == "__main__":

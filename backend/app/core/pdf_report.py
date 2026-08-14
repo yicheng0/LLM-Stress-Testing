@@ -211,19 +211,25 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any], details
 
 def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
     cfg = summary.get("config") or {}
-    results = summary.get("results") or {}
+    cases = [_cache_case_view(item, cfg) for item in summary.get("cases") or []]
+    results = _cache_results_view(summary.get("results") or {}, cases)
     cards = [
-        ("Case 总数", _num(results.get("total_cases")), "固定场景串行执行", ""),
-        ("缓存命中", _num(results.get("cache_hit_cases")), "验证请求命中 Token > 0", "ok"),
-        ("未命中缓存", _num(results.get("cache_miss_cases")), "明确返回缓存字段且命中为 0", "warn"),
-        ("无法判定", _num(results.get("unverifiable_cases")), "上游未返回缓存字段", "warn"),
-        ("执行失败", _num(results.get("failed_cases")), "准备或验证请求失败", "danger"),
+        ("计划请求", _num(results.get("planned_requests")), "所有 Case 业务请求", ""),
+        ("实际请求", _num(results.get("executed_requests")), f"Case {_num(results.get('total_cases'))} 个", ""),
+        ("可判定验证", _num(results.get("decidable_requests")), "命中与明确未命中", "ok"),
+        ("总体命中率", _percent(results.get("cache_hit_rate")), f"命中 {_num(results.get('cache_hit_requests'))} / 可判定 {_num(results.get('decidable_requests'))}", "ok" if results.get("cache_hit_rate") is not None else "warn"),
+        ("无法判定", _num(results.get("unverifiable_requests")), "成功但无缓存字段", "warn"),
+        ("执行失败", _num(results.get("failed_requests")), "失败样本独立统计", "danger" if results.get("failed_requests") else "ok"),
     ]
+    prefix_target = cfg.get("cache_prefix_target_tokens", cfg.get("input_tokens"))
+    prefix_actual = cfg.get("cache_prefix_actual_tokens")
+    requests_per_case = cfg.get("requests_per_case")
     config_rows = [
         ["测试名称", cfg.get("name") or "缓存专项测试", "协议", cfg.get("api_protocol")],
         ["模型", cfg.get("model"), "Endpoint", cfg.get("endpoint")],
         ["流式", "开启" if cfg.get("enable_stream") else "关闭", "最大输出 Token", _num(cfg.get("max_output_tokens"))],
-        ["公共前缀目标", f"{_num(cfg.get('cache_prefix_target_tokens'))} Token", "公共前缀实际", f"{_num(cfg.get('cache_prefix_actual_tokens'))} Token"],
+        ["公共前缀目标 Token", _num(prefix_target), "公共前缀实际 Token", _num(prefix_actual)],
+        ["每 Case 请求次数", _num(requests_per_case), "计划请求总数", _num(results.get("planned_requests"))],
         ["选中 Case", "、".join(cfg.get("case_ids") or []), "接入域名", cfg.get("base_url")],
     ]
     case_sections = []
@@ -233,16 +239,24 @@ def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
         "unverifiable": "无法判定",
         "failed": "执行失败",
     }
-    for case in summary.get("cases") or []:
-        evidence_rows = []
-        for phase, label in (("prepare", "准备请求"), ("validate", "验证请求")):
-            item = case.get(phase)
-            if not item:
-                evidence_rows.append([label, "未执行", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "不可用", "-"])
-                continue
+    classification_labels = {
+        "cache_hit": "缓存命中",
+        "cache_miss": "未命中缓存",
+        "unverifiable": "无法判定",
+        "failed": "执行失败",
+    }
+    for case in cases:
+        performance_rows = []
+        cache_rows = []
+        for item in case["requests"]:
             cache = item.get("cache") or {}
-            evidence_rows.append([
-                label,
+            request_index = item.get("request_index")
+            phase_label = item.get("phase_label") or ("缓存建立" if item.get("phase") == "prepare" else "缓存验证")
+            classification = classification_labels.get(item.get("classification"), "不计入")
+            performance_rows.append([
+                request_index,
+                phase_label,
+                classification,
                 "成功" if item.get("ok") else "失败",
                 _num(item.get("status")),
                 _seconds(item.get("latency_sec")),
@@ -250,21 +264,53 @@ def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
                 _num(item.get("input_tokens")),
                 _num(item.get("output_tokens")),
                 _num(item.get("total_tokens")),
+            ])
+            cache_rows.append([
+                request_index,
+                phase_label,
+                classification,
                 _num(cache.get("cached_input_tokens")) if cache.get("observed") else "不可用",
                 _num(cache.get("cache_creation_input_tokens")) if cache.get("observed") else "不可用",
                 _num(cache.get("cache_inclusive_total_tokens")),
                 _percent(cache.get("cache_hit_rate")) if cache.get("observed") else "不可用",
                 " · ".join(part for part in [item.get("error_type"), item.get("error_message")] if part) or "-",
             ])
-        headers = ["阶段", "结果", "状态码", "总延迟", "TTFT", "输入", "输出", "总 Token", "缓存命中", "缓存创建", "含缓存", "命中率", "错误"]
         failure = case.get("failure_phase")
         meta = f"判定：{status_labels.get(case.get('status'), case.get('status'))}"
         if failure:
-            meta += f" · 失败阶段：{'准备请求' if failure == 'prepare' else '验证请求'}"
+            meta += f" · 失败阶段：{'缓存建立' if failure == 'prepare' else '缓存验证'}"
+        stats = _data_table(
+            ["计划", "实际", "验证样本", "命中", "未命中", "无法判定", "失败", "可判定", "Case 命中率"],
+            [[
+                _num(case.get("planned_requests")), _num(case.get("executed_requests")),
+                _num(case.get("validation_requests")), _num(case.get("cache_hit_requests")),
+                _num(case.get("cache_miss_requests")), _num(case.get("unverifiable_requests")),
+                _num(case.get("failed_requests")), _num(case.get("decidable_requests")),
+                _percent(case.get("cache_hit_rate")),
+            ]],
+            css_class="matrix-table",
+        )
+        if not performance_rows:
+            request_tables = '<div class="muted">没有已执行请求。</div>'
+        else:
+            request_tables = (
+                "<h3>逐请求性能与 Token</h3>"
+                + _data_table(
+                    ["序号", "阶段", "判定", "结果", "状态码", "总延迟", "TTFT", "输入", "输出", "总 Token"],
+                    performance_rows,
+                    css_class="matrix-table detail-table",
+                )
+                + "<h3>逐请求缓存与错误</h3>"
+                + _data_table(
+                    ["序号", "阶段", "判定", "缓存命中", "缓存创建", "含缓存", "请求缓存比例", "错误"],
+                    cache_rows,
+                    css_class="matrix-table detail-table detail-errors",
+                )
+            )
         case_sections.append(
             f"<h2>{html.escape(str(case.get('case_name') or '缓存 Case'))}</h2>"
             f"<div class='muted'>{html.escape(meta)} · {html.escape(str(case.get('description') or ''))}</div>"
-            f"{_data_table(headers, evidence_rows, css_class='matrix-table detail-table')}"
+            f"{stats}{request_tables}"
         )
     notice = (
         '<div class="notice">判定仅依据上游返回的缓存用量字段：命中 Token 大于 0 为“缓存命中”；'
@@ -284,6 +330,81 @@ def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
     <h2>测试配置</h2>{_data_table(["项目", "值", "项目", "值"], config_rows)}
     {''.join(case_sections)}
     """
+
+
+def _cache_request_classification(item: dict[str, Any]) -> str | None:
+    if item.get("phase") == "prepare" or int(item.get("request_index") or 0) == 1:
+        return None
+    if not item.get("ok"):
+        return "failed"
+    cache = item.get("cache") or {}
+    if not cache.get("observed"):
+        return "unverifiable"
+    return "cache_hit" if int(cache.get("cached_input_tokens") or 0) > 0 else "cache_miss"
+
+
+def _cache_case_requests(case: dict[str, Any]) -> list[dict[str, Any]]:
+    source = case.get("requests")
+    legacy = not isinstance(source, list)
+    if not legacy:
+        raw_requests = [item for item in source if isinstance(item, dict)]
+    else:
+        raw_requests = [item for item in (case.get("prepare"), case.get("validate")) if isinstance(item, dict)]
+    requests = []
+    for index, raw in enumerate(raw_requests, start=1):
+        item = dict(raw)
+        item.setdefault("request_index", index)
+        item.setdefault("phase", "prepare" if index == 1 else "validate")
+        if legacy:
+            default_label = "准备请求（缓存建立）" if item["phase"] == "prepare" else "验证请求（缓存验证）"
+        else:
+            default_label = "缓存建立" if item["phase"] == "prepare" else "缓存验证"
+        item.setdefault("phase_label", default_label)
+        if "classification" not in item:
+            item["classification"] = _cache_request_classification(item)
+        requests.append(item)
+    return requests
+
+
+def _cache_case_view(case: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    view = dict(case)
+    requests = _cache_case_requests(case)
+    validation = [item for item in requests if item.get("phase") != "prepare"]
+    counts = {
+        key: sum(item.get("classification") == classification for item in validation)
+        for key, classification in (
+            ("cache_hit_requests", "cache_hit"),
+            ("cache_miss_requests", "cache_miss"),
+            ("unverifiable_requests", "unverifiable"),
+            ("failed_requests", "failed"),
+        )
+    }
+    decidable = counts["cache_hit_requests"] + counts["cache_miss_requests"]
+    configured = cfg.get("requests_per_case")
+    view.update({
+        "requests": requests,
+        "planned_requests": case.get("planned_requests", configured if configured is not None else len(requests)),
+        "executed_requests": case.get("executed_requests", len(requests)),
+        "validation_requests": case.get("validation_requests", len(validation)),
+        **{key: case.get(key, value) for key, value in counts.items()},
+        "decidable_requests": case.get("decidable_requests", decidable),
+        "cache_hit_rate": case.get("cache_hit_rate", counts["cache_hit_requests"] / decidable if decidable else None),
+    })
+    return view
+
+
+def _cache_results_view(results: dict[str, Any], cases: list[dict[str, Any]]) -> dict[str, Any]:
+    view = dict(results)
+    summed_fields = [
+        "planned_requests", "executed_requests", "validation_requests", "cache_hit_requests",
+        "cache_miss_requests", "unverifiable_requests", "failed_requests", "decidable_requests",
+    ]
+    for field in summed_fields:
+        view.setdefault(field, sum(int(case.get(field) or 0) for case in cases))
+    view.setdefault("total_cases", len(cases))
+    decidable = int(view.get("decidable_requests") or 0)
+    view.setdefault("cache_hit_rate", int(view.get("cache_hit_requests") or 0) / decidable if decidable else None)
+    return view
 
 
 def _render_matrix_body(summary: dict[str, Any], charts: dict[str, Any]) -> str:
