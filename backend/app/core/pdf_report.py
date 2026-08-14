@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from backend.app.core.report_service import build_chart_data, load_request_results
+from backend.app.core.report_service import build_chart_data
 from loadtest import build_matrix_chart_data
 
 
@@ -67,17 +67,23 @@ def render_pdf_html(
     th {{ background: #f3f4f6; font-weight: 700; }}
     .matrix-table {{ table-layout: fixed; font-size: 9px; }}
     .matrix-table th, .matrix-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
-    .detail-table {{ table-layout: fixed; font-size: 9px; }}
+    .detail-table {{ table-layout: fixed; font-size: 9px; break-inside: auto; margin-bottom: 12px; }}
     .detail-table th, .detail-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
     .detail-table thead {{ display: table-header-group; }}
-    .detail-table tr {{ break-inside: avoid; }}
-    .detail-table th:nth-child(1) {{ width: 6%; }}
-    .detail-table th:nth-child(2) {{ width: 10%; }}
-    .detail-table th:nth-child(3) {{ width: 10%; }}
-    .detail-table th:nth-child(4), .detail-table th:nth-child(5), .detail-table th:nth-child(6) {{ width: 11%; }}
-    .detail-table th:nth-child(7) {{ width: 10%; }}
-    .detail-table th:nth-child(8) {{ width: 10%; }}
-    .detail-table th:nth-child(9) {{ width: 8%; }}
+    .detail-table tbody {{ break-inside: auto; }}
+    .detail-table tr {{ break-inside: avoid; page-break-inside: avoid; }}
+    .detail-performance th:nth-child(1) {{ width: 6%; }}
+    .detail-performance th:nth-child(2) {{ width: 7%; }}
+    .detail-performance th:nth-child(3) {{ width: 8%; }}
+    .detail-performance th:nth-child(4), .detail-performance th:nth-child(5) {{ width: 12%; }}
+    .detail-performance th:nth-child(6), .detail-performance th:nth-child(7), .detail-performance th:nth-child(8) {{ width: 12%; }}
+    .detail-performance th:nth-child(9) {{ width: 9%; }}
+    .detail-errors th:nth-child(1) {{ width: 7%; }}
+    .detail-errors th:nth-child(2), .detail-errors th:nth-child(3), .detail-errors th:nth-child(4) {{ width: 14%; }}
+    .detail-errors th:nth-child(5) {{ width: 11%; }}
+    .detail-errors th:nth-child(6) {{ width: 15%; }}
+    .detail-errors th:nth-child(7) {{ width: 25%; }}
+    .detail-errors td:nth-child(6), .detail-errors td:nth-child(7) {{ text-align: left; word-break: break-word; }}
     .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
     .chart-card {{ padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; break-inside: avoid; }}
     .chart-title {{ margin-bottom: 8px; color: #111827; font-size: 13px; font-weight: 700; }}
@@ -136,7 +142,7 @@ def ensure_pdf_report(
     output_path: Path,
 ) -> Path:
     charts = build_chart_data(summary, details_path, charts_path=charts_path)
-    details = load_request_results(details_path)
+    details = _load_pdf_details(details_path)
     html_text = render_pdf_html(summary, charts, details=details)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
@@ -146,6 +152,23 @@ def ensure_pdf_report(
     finally:
         temp_path.unlink(missing_ok=True)
     return output_path
+
+
+def _load_pdf_details(path: str | None) -> list[dict[str, Any]]:
+    if not path or not Path(path).exists():
+        return []
+    details: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as detail_file:
+        for line in detail_file:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(item, dict):
+                details.append(item)
+    return details
 
 
 def _render_single_body(summary: dict[str, Any], charts: dict[str, Any], details: list[Any]) -> str:
@@ -283,6 +306,12 @@ def _detail_value(item: Any, field: str, default: Any = None) -> Any:
     return getattr(item, field, default)
 
 
+def _detail_has_field(item: Any, field: str) -> bool:
+    if isinstance(item, dict):
+        return field in item
+    return hasattr(item, field)
+
+
 def _detail_decode(item: Any) -> float | None:
     latency = _detail_value(item, "latency_sec")
     ttft = _detail_value(item, "ttft_sec")
@@ -299,6 +328,8 @@ def _detail_decode(item: Any) -> float | None:
 
 
 def _detail_cache_hit_rate(item: Any) -> float | None:
+    if not _detail_has_field(item, "cached_input_tokens"):
+        return None
     cached = _detail_value(item, "cached_input_tokens")
     created = _detail_value(item, "cache_creation_input_tokens", 0) or 0
     input_tokens = _detail_value(item, "input_tokens")
@@ -374,25 +405,52 @@ def _single_summary_table(cfg: dict[str, Any], res: dict[str, Any], details: lis
 
 
 def _single_detail_section(details: list[Any], cfg: dict[str, Any]) -> str:
-    success = [item for item in details if _detail_value(item, "ok") is True]
     failures = [item for item in details if _detail_value(item, "ok") is not True]
-    rows = []
-    for item in success:
-        rows.append([
+    performance_rows = []
+    cache_error_rows = []
+    for item in details:
+        performance_rows.append([
             _detail_value(item, "request_id"),
+            "OK" if _detail_value(item, "ok") is True else "FAIL",
+            _num(_detail_value(item, "status")),
             _seconds(_detail_value(item, "latency_sec")),
             _seconds(_detail_value(item, "ttft_sec")),
             _num(_detail_value(item, "input_tokens")),
             _num(_detail_value(item, "output_tokens")),
-            _num(_detail_value(item, "cached_input_tokens")),
-            _percent(_detail_cache_hit_rate(item)),
+            _num(_detail_value(item, "total_tokens")),
             _num(_detail_tps(item)),
         ])
-    headers = ["#", "总延迟(s)", "TTFT(s)", "输入 tokens", "输出 tokens", "命中 tokens", "命中率", "TPS"]
-    detail_table = _data_table(headers, rows, css_class="detail-table") if rows else '<div class="muted">暂无成功样本，明细不可用</div>'
+        cache_error_rows.append([
+            _detail_value(item, "request_id"),
+            _detail_metric(item, "cached_input_tokens", _num),
+            _detail_metric(item, "cache_creation_input_tokens", _num),
+            _detail_metric(item, "cache_inclusive_total_tokens", _num),
+            _percent(_detail_cache_hit_rate(item)),
+            _detail_value(item, "error_type") or "-",
+            _detail_value(item, "error_message") or "-",
+        ])
+    performance_headers = ["ID", "结果", "状态码", "总延迟(s)", "TTFT(s)", "输入 Token", "输出 Token", "总 Token", "TPS"]
+    cache_error_headers = ["ID", "缓存命中 Token", "缓存创建 Token", "含缓存 Token", "缓存命中率", "错误类型", "错误信息"]
+    if performance_rows:
+        performance_table = _data_table(performance_headers, performance_rows, css_class="detail-table detail-performance")
+        cache_error_table = _data_table(cache_error_headers, cache_error_rows, css_class="detail-table detail-errors")
+    else:
+        performance_table = '<div class="muted">暂无请求明细，字段不可用</div>'
+        cache_error_table = ""
     failure_text = _failure_summary(failures)
-    notice = _latency_notice(cfg, {"ttft_samples": sum(1 for item in success if _detail_value(item, "ttft_sec") is not None)})
-    return f'<h2>单次请求明细</h2>{notice}{detail_table}{failure_text}'
+    notice = _latency_notice(cfg, {"ttft_samples": sum(1 for item in details if _detail_value(item, "ok") is True and _detail_value(item, "ttft_sec") is not None)})
+    return (
+        f'<h2>单次请求明细</h2>{notice}'
+        f'<h3>请求状态、延迟与 Token</h3>{performance_table}'
+        f'<h3>请求缓存与错误</h3>{cache_error_table}'
+        f'{failure_text}'
+    )
+
+
+def _detail_metric(item: Any, field: str, formatter: Any) -> str:
+    if not _detail_has_field(item, field):
+        return "不可用"
+    return formatter(_detail_value(item, field))
 
 
 def _failure_summary(failures: list[Any]) -> str:

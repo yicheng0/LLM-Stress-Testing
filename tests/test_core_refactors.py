@@ -724,10 +724,57 @@ class MetricsAccumulatorTest(unittest.TestCase):
     def test_single_pdf_contains_request_result_tables(self):
         html = render_pdf_html(
             {"config": {"enable_stream": True, "model": "glm-5"}, "results": {"success_rate": 1}},
-            details=[result(request_id=1, cached_input_tokens=50, input_tokens=100, output_tokens=20)],
+            details=[
+                result(
+                    request_id=101,
+                    cached_input_tokens=50,
+                    cache_creation_input_tokens=5,
+                    cache_inclusive_total_tokens=175,
+                    input_tokens=100,
+                    output_tokens=20,
+                ),
+                result(
+                    request_id=202,
+                    ok=False,
+                    status=429,
+                    ttft_sec=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    error_type="HTTP_429",
+                    error_message="rate limited",
+                ),
+            ],
         )
-        for label in ("压测结果汇总", "实际 Cache 命中率", "TPS Avg", "单次请求明细", "命中率", "TPS"):
+        for label in (
+            "请求状态、延迟与 Token", "ID", "结果", "状态码", "总延迟(s)", "TTFT(s)",
+            "输入 Token", "输出 Token", "总 Token", "TPS", "请求缓存与错误", "缓存命中 Token",
+            "缓存创建 Token", "含缓存 Token", "缓存命中率", "错误类型", "错误信息",
+        ):
             self.assertIn(label, html)
+        for value in ("101", "202", "OK", "FAIL", "429", "HTTP_429", "rate limited", "175"):
+            self.assertIn(value, html)
+
+    def test_pdf_request_details_distinguish_missing_fields_from_zero(self):
+        html = render_pdf_html(
+            {"config": {"enable_stream": True}, "results": {}},
+            details=[{
+                "request_id": 1,
+                "ok": True,
+                "status": 200,
+                "latency_sec": 0,
+                "ttft_sec": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "error_type": None,
+                "error_message": None,
+            }],
+        )
+
+        self.assertIn("0.0000s", html)
+        self.assertIn("不可用", html)
+        self.assertGreaterEqual(html.count(">-<"), 2)
 
     def test_pdf_latency_distinguishes_missing_values_from_real_zero(self):
         summary = {
