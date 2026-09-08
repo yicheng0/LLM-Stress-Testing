@@ -13,8 +13,26 @@
           <el-form-item label="最大输出 Token"><el-input-number v-model="form.max_output_tokens" :min="1" :max="65536" /></el-form-item>
           <el-form-item label="流式响应"><el-switch v-model="form.enable_stream" /></el-form-item>
         </div>
-        <h3>测试 Case</h3>
-        <div class="case-grid"><button v-for="item in cases" :key="item.id" type="button" class="case-card" :class="{ active: form.case_ids.includes(item.id) }" @click="toggle(item.id)"><strong>{{ item.name }}</strong><span>{{ item.description }}</span><em>{{ form.case_ids.includes(item.id) ? '已选择' : '点击选择' }}</em></button></div>
+        <div class="case-section-head">
+          <div>
+            <h3>测试 Case</h3>
+            <p>点击首列复选框选择需要执行的 Case；执行前指标显示为“—”。</p>
+          </div>
+          <a-tag color="blue">已选择 {{ selected.length }} / {{ cases.length }}</a-tag>
+        </div>
+        <div class="case-table-wrap">
+          <a-table :columns="caseColumns" :data-source="cases" :pagination="false" :scroll="{ x: 1280 }" row-key="id" class="kimi-case-table">
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'select'"><a-checkbox :checked="form.case_ids.includes(record.id)" @change="toggle(record.id)" /></template>
+              <template v-else-if="column.key === 'endpoint'">{{ form.endpoint || '—' }}</template>
+              <template v-else-if="column.key === 'apiKey'">{{ maskedApiKey }}</template>
+              <template v-else-if="column.key === 'model'">{{ form.model || '—' }}</template>
+              <template v-else-if="column.key === 'status'"><a-tag color="default">待测试</a-tag></template>
+              <template v-else-if="['latency', 'ttft'].includes(column.key)">—</template>
+              <template v-else-if="['retry', 'rerun'].includes(column.key)">0</template>
+            </template>
+          </a-table>
+        </div>
         <div class="submit-row"><el-button type="primary" :loading="loading" @click="submit">启动 Kimi 测试集（{{ selected.length }} 个 Case）</el-button></div>
       </el-form>
     </div>
@@ -24,6 +42,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Checkbox as ACheckbox, Table as ATable, Tag as ATag } from 'ant-design-vue'
 import { createKimiSuite } from '../api/client'
 const router = useRouter(); const loading = ref(false)
 const cases = [
@@ -31,7 +50,35 @@ const cases = [
 ].map(([id,name,description]) => ({ id, name, description }))
 const form = reactive({ name:'Kimi 能力测试集', api_protocol:'openai', base_url:'https://api.wenwen-ai.com', endpoint:'/v1/chat/completions', model:'kimi-k3', api_key:'', max_output_tokens:128, enable_stream:true, case_ids:cases.map(item=>item.id) })
 const selected = computed(() => form.case_ids)
+const caseColumns = [
+  { title: '选择', key: 'select', width: 72, align: 'center' },
+  { title: 'Case 名称', dataIndex: 'name', key: 'name', width: 260 },
+  { title: 'Endpoint', key: 'endpoint', width: 180 },
+  { title: 'API Key', key: 'apiKey', width: 180 },
+  { title: '供应商模型', key: 'model', width: 150 },
+  { title: '状态', key: 'status', width: 110, align: 'center' },
+  { title: '耗时', key: 'latency', width: 110, align: 'center' },
+  { title: '首 token', key: 'ttft', width: 110, align: 'center' },
+  { title: '重试', key: 'retry', width: 82, align: 'center' },
+  { title: '人工重跑', key: 'rerun', width: 110, align: 'center' }
+]
+const maskedApiKey = computed(() => {
+  const value = String(form.api_key || '')
+  if (!value) return '—'
+  if (value.length <= 8) return '••••••••'
+  return `${value.slice(0, 4)}••••${value.slice(-4)}`
+})
 function toggle(id) { form.case_ids = form.case_ids.includes(id) ? form.case_ids.filter(x=>x!==id) : [...form.case_ids,id] }
 async function submit() { if (!form.api_key) return ElMessage.error('请输入 API Key'); if (!form.case_ids.length) return ElMessage.error('至少选择一个 Case'); loading.value=true; try { const result=await createKimiSuite(form); router.push(`/tests/kimi-suite/${result.test_id}`) } catch (e) { ElMessage.error(e.message) } finally { loading.value=false } }
 </script>
-<style scoped>.form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.case-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.case-card{display:grid;gap:8px;min-height:130px;padding:16px;border:1px solid #d1d5db;border-radius:10px;background:#fff;text-align:left;cursor:pointer}.case-card.active{border-color:#2563eb;background:#eff6ff}.case-card span{color:#6b7280}.case-card em{color:#2563eb;font-style:normal;font-weight:700}.submit-row{margin-top:22px;text-align:right}@media(max-width:768px){.form-grid,.case-grid{grid-template-columns:1fr}}</style>
+<style scoped>
+.form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.case-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:24px 0 12px}
+.case-section-head h3{margin:0 0 5px;font-size:18px}
+.case-section-head p{margin:0;color:#6b7280;font-size:13px}
+.case-table-wrap{overflow:hidden;border:1px solid #dfe5ec;border-radius:10px;background:#fff}
+.kimi-case-table :deep(.ant-table-thead > tr > th){background:#f5f8fc;color:#334155;font-weight:700;white-space:nowrap}
+.kimi-case-table :deep(.ant-table-tbody > tr > td){height:58px}
+.submit-row{margin-top:22px;text-align:right}
+@media(max-width:768px){.form-grid{grid-template-columns:1fr}.case-section-head{align-items:flex-start;flex-direction:column}.submit-row{text-align:left}}
+</style>
