@@ -165,6 +165,8 @@ def build_payload(
         "max_tokens": max_output_tokens,
         "stream": enable_stream,
     }
+    if enable_stream:
+        payload["stream_options"] = {"include_usage": True}
     if temperature is not None:
         payload["temperature"] = temperature
     return payload

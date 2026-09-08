@@ -40,6 +40,8 @@ def render_pdf_html(
     charts = charts or {}
     if summary.get("task_kind") == "cache_diagnostics":
         body = _render_cache_diagnostics_body(summary)
+    elif summary.get("task_kind") == "vendor_billing_self_test":
+        body = _render_vendor_billing_body(summary)
     elif summary.get("matrix"):
         body = _render_matrix_body(summary, charts)
     else:
@@ -74,6 +76,8 @@ def render_pdf_html(
     .detail-table thead {{ display: table-header-group; }}
     .detail-table tbody {{ break-inside: auto; }}
     .detail-table tr {{ break-inside: avoid; page-break-inside: avoid; }}
+    .billing-table {{ table-layout: fixed; font-size: 9px; }}
+    .billing-table th, .billing-table td {{ padding: 5px 4px; text-align: center; overflow-wrap: anywhere; }}
     .detail-performance th:nth-child(1) {{ width: 6%; }}
     .detail-performance th:nth-child(2) {{ width: 7%; }}
     .detail-performance th:nth-child(3) {{ width: 8%; }}
@@ -143,7 +147,7 @@ def ensure_pdf_report(
     charts_path: str | None,
     output_path: Path,
 ) -> Path:
-    charts = {} if summary.get("task_kind") == "cache_diagnostics" else build_chart_data(summary, details_path, charts_path=charts_path)
+    charts = {} if summary.get("task_kind") in {"cache_diagnostics", "vendor_billing_self_test"} else build_chart_data(summary, details_path, charts_path=charts_path)
     details = _load_pdf_details(details_path)
     html_text = render_pdf_html(summary, charts, details=details)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +212,66 @@ def _render_single_body(summary: dict[str, Any], charts: dict[str, Any], details
     {_single_detail_section(details, cfg)}
     """
 
+
+
+def _render_vendor_billing_body(summary: dict[str, Any]) -> str:
+    cfg = summary.get("config") or {}
+    rule = summary.get("pricing_rule") or {}
+    details = summary.get("details") or []
+    status = str(summary.get("status") or "unverifiable")
+    status_labels = {
+        "passed": "通过",
+        "token_anomaly": "Token 异常",
+        "pricing_unverifiable": "计价规则无法核验",
+        "failed": "接口执行失败",
+        "unverifiable": "无法核验",
+        "cancelled": "已取消",
+    }
+    status_label = status_labels.get(status, status)
+    rows = []
+    for item in details:
+        supplier = item.get("supplier") or {}
+        reference = item.get("reference") or {}
+        comparison = item.get("comparison") or {}
+        rows.append([
+            item.get("input_token_target"),
+            supplier.get("input_tokens", "—"),
+            reference.get("input_tokens", "—"),
+            comparison.get("input_token_delta", "—"),
+            supplier.get("output_tokens", "—"),
+            reference.get("output_tokens", "—"),
+            comparison.get("output_token_delta", "—"),
+            comparison.get("supplier_cost", {}).get("total_usd", "—"),
+            comparison.get("reference_cost", {}).get("total_usd", "—"),
+            status_labels.get(comparison.get("status"), comparison.get("status", "—")),
+        ])
+    table = _data_table(
+        ["输入目标", "供应商输入", "官方输入", "输入差值", "供应商输出", "官方输出", "输出差值", "供应商费用 USD", "官方费用 USD", "状态"],
+        rows,
+        css_class="billing-table",
+    )
+    config_rows = [
+        ["供应商", cfg.get("supplier_name", "—"), "供应商模型", cfg.get("model", "—")],
+        ["供应商 URL", cfg.get("base_url", "—"), "供应商 Endpoint", cfg.get("endpoint", "—")],
+        ["官方模型", cfg.get("reference_model", "—"), "官方 Endpoint", cfg.get("reference_endpoint", "—")],
+        ["输入长度组", "、".join(str(value) for value in cfg.get("input_token_lengths") or []) or "—", "最大输出 Token", cfg.get("max_output_tokens", "—")],
+        ["价格规则", rule.get("id", "—"), "价格版本", rule.get("version", "—")],
+        ["计价口径", rule.get("input_mode", "inclusive"), "判定容差", f"绝对 {cfg.get('token_abs_tolerance', '—')}；相对 {_percent(cfg.get('token_relative_tolerance'))}"],
+    ]
+    cards = [
+        ("总体结论", status_label, f"完成 {summary.get('completed_groups', 0)} / {summary.get('total_groups', 0)} 组", "ok" if status == "passed" else "danger" if status in {"failed", "token_anomaly"} else "warn"),
+        ("通过组数", _num((summary.get("status_counts") or {}).get("passed")), "输入 Token 在容差内", "ok"),
+        ("Token 异常", _num((summary.get("status_counts") or {}).get("token_anomaly")), "输入 Token 差异超出容差", "danger"),
+        ("无法核验", _num(sum((summary.get("status_counts") or {}).get(key, 0) for key in ("unverifiable", "pricing_unverifiable"))), "不使用估算值判定通过", "warn"),
+    ]
+    return f"""
+    {_header(cfg, "供应商接入计费自测报告")}
+    <p class="notice">本报告核验供应商与官方参考接口的 usage、输入 Token 差异及按价格规则计算的应计费用；不代表供应商实际账单扣费，也不保存 API Key、完整 Prompt 或完整回答。</p>
+    <h2>结论摘要</h2>{_cards(cards)}
+    <h2>连接与价格规则</h2>{_data_table(["项目", "值", "项目", "值"], config_rows)}
+    <h2>逐组 Token 与费用对照</h2>{table}
+    <h2>判定说明</h2><p class="muted">{html.escape("；".join(f"{status_labels.get(key, key)} {value} 组" for key, value in (summary.get("status_counts") or {}).items()) or "没有完成的测试组")}</p>
+    """
 
 def _render_cache_diagnostics_body(summary: dict[str, Any]) -> str:
     cfg = summary.get("config") or {}

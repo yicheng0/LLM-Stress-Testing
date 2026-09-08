@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -13,8 +14,8 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.core.auth import AuthUser
 from backend.app.core.task_status import ACTIVE_TASK_STATUSES, TaskStatus, normalize_task_status
-from backend.app.models.database import SessionLocal, TestEvent, TestResult, TestTask
-from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate
+from backend.app.models.database import SessionLocal, TestEvent, TestResult, TestTask, VendorTemplate
+from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate, VendorBillingCreate, VendorTemplateCreate, VendorTemplateUpdate
 
 
 SENSITIVE_TEXT_PATTERNS = [
@@ -42,7 +43,7 @@ def _redact_sensitive(data: Any) -> Any:
     if isinstance(data, dict):
         redacted = {}
         for key, value in data.items():
-            if key.lower() in {"api_key", "api-key", "authorization", "x-api-key", "x-goog-api-key"}:
+            if "api_key" in key.lower() or key.lower() in {"api-key", "authorization", "x-api-key", "x-goog-api-key", "reference_key"}:
                 continue
             if key == "custom_prompt":
                 redacted[key] = value
@@ -72,7 +73,7 @@ class Repository:
     def session(self) -> Session:
         return SessionLocal()
 
-    def create_task(self, task_id: str, payload: TestCreate | CacheDiagnosticsCreate, owner: AuthUser) -> TestTask:
+    def create_task(self, task_id: str, payload: TestCreate | CacheDiagnosticsCreate | VendorBillingCreate, owner: AuthUser) -> TestTask:
         data = _with_prompt_metadata(_redact_sensitive(_model_dump(payload)))
         now = datetime.utcnow()
         task = TestTask(
@@ -85,12 +86,12 @@ class Repository:
             endpoint=payload.endpoint,
             model=payload.model,
             status=TaskStatus.QUEUED.value,
-            concurrency=payload.concurrency,
-            duration_sec=payload.duration_sec,
-            input_tokens=payload.input_tokens,
+            concurrency=getattr(payload, "concurrency", 1),
+            duration_sec=getattr(payload, "duration_sec", 1),
+            input_tokens=getattr(payload, "input_tokens", min(getattr(payload, "input_token_lengths", [1]))),
             max_output_tokens=payload.max_output_tokens,
             enable_stream=payload.enable_stream,
-            matrix_mode=payload.matrix_mode,
+            matrix_mode=getattr(payload, "matrix_mode", False),
             config_json=json.dumps(data, ensure_ascii=False),
             created_at=now,
         )
@@ -104,6 +105,96 @@ class Repository:
             db.commit()
             db.refresh(task)
             return task
+
+    def create_vendor_template(self, payload: VendorTemplateCreate, owner: AuthUser) -> VendorTemplate:
+        now = datetime.utcnow()
+        config = _redact_sensitive(_model_dump(payload))
+        template = VendorTemplate(
+            id=uuid.uuid4().hex,
+            owner_username=owner.username,
+            owner_role=owner.role,
+            name=payload.name,
+            supplier_name=payload.supplier_name,
+            api_protocol=payload.api_protocol,
+            config_json=json.dumps(config, ensure_ascii=False),
+            version=1,
+            enabled=True,
+            created_at=now,
+            updated_at=now,
+        )
+        with self.session() as db:
+            db.add(template)
+            db.commit()
+            db.refresh(template)
+            db.expunge(template)
+        return template
+
+    def get_vendor_template(self, template_id: str, owner: AuthUser) -> VendorTemplate | None:
+        with self.session() as db:
+            template = db.get(VendorTemplate, template_id)
+            if not template or (owner.role != "root" and template.owner_username != owner.username):
+                return None
+            db.expunge(template)
+            return template
+
+    def list_vendor_templates(
+        self,
+        page: int,
+        page_size: int,
+        owner: AuthUser,
+        enabled: bool | None = None,
+        supplier_name: str | None = None,
+    ) -> tuple[int, list[VendorTemplate]]:
+        page = max(1, page)
+        page_size = min(max(1, page_size), 100)
+        filters = []
+        if owner.role != "root":
+            filters.append(VendorTemplate.owner_username == owner.username)
+        if enabled is not None:
+            filters.append(VendorTemplate.enabled == enabled)
+        if supplier_name:
+            filters.append(VendorTemplate.supplier_name.ilike(f"%{supplier_name.strip()}%"))
+        with self.session() as db:
+            total = int(db.execute(select(func.count()).select_from(VendorTemplate).where(*filters)).scalar_one())
+            rows = db.execute(
+                select(VendorTemplate)
+                .where(*filters)
+                .order_by(VendorTemplate.updated_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).scalars().all()
+            for row in rows:
+                db.expunge(row)
+            return total, list(rows)
+
+    def update_vendor_template(self, template_id: str, payload: VendorTemplateUpdate, owner: AuthUser) -> VendorTemplate | None:
+        with self.session() as db:
+            template = db.get(VendorTemplate, template_id)
+            if not template or (owner.role != "root" and template.owner_username != owner.username):
+                return None
+            config = _redact_sensitive(_model_dump(payload))
+            template.name = payload.name
+            template.supplier_name = payload.supplier_name
+            template.api_protocol = payload.api_protocol
+            template.config_json = json.dumps(config, ensure_ascii=False)
+            template.version += 1
+            template.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(template)
+            db.expunge(template)
+            return template
+
+    def set_vendor_template_enabled(self, template_id: str, enabled: bool, owner: AuthUser) -> VendorTemplate | None:
+        with self.session() as db:
+            template = db.get(VendorTemplate, template_id)
+            if not template or (owner.role != "root" and template.owner_username != owner.username):
+                return None
+            template.enabled = enabled
+            template.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(template)
+            db.expunge(template)
+            return template
 
     def get_task(self, task_id: str) -> tuple[TestTask, TestResult | None] | None:
         with self.session() as db:

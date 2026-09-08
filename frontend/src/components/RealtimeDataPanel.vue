@@ -609,6 +609,10 @@ function goTask(item) {
     router.push(`/tests/cache-diagnostics/${item.id}`)
     return
   }
+  if (item.task_kind === 'vendor_billing_self_test') {
+    router.push(isTerminalTaskStatus(item.status) ? `/tests/vendor-billing/${item.id}/result` : `/tests/vendor-billing/${item.id}/run`)
+    return
+  }
   if (isTerminalTaskStatus(item.status)) {
     router.push(`/tests/${item.id}/report`)
     return

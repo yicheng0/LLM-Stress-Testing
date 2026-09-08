@@ -29,9 +29,9 @@ class SseStreamParser:
     def iter_sse_json(text: str):
         for line in text.split("\n"):
             line = line.strip()
-            if not line.startswith("data: "):
+            if not line.startswith("data:"):
                 continue
-            data_str = line[6:]
+            data_str = line[5:].lstrip()
             if data_str == "[DONE]":
                 break
             try:
@@ -153,9 +153,9 @@ class SseStreamParser:
                     break
                 line = bytes(buffer[:line_end]).strip()
                 del buffer[:line_end + 1]
-                if not line.startswith(b"data: "):
+                if not line.startswith(b"data:"):
                     continue
-                data = line[6:]
+                data = line[5:].lstrip()
                 if data == b"[DONE]":
                     continue
                 try:

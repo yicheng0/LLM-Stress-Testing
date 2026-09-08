@@ -62,6 +62,22 @@ class TestEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class VendorTemplate(Base):
+    __tablename__ = "vendor_templates"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_username: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    owner_role: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    api_protocol: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
