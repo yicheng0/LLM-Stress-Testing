@@ -10,19 +10,23 @@
         <template #default="{ row }">{{ protocolText(row.api_protocol) }}</template>
       </el-table-column>
       <el-table-column prop="model" label="模型" min-width="120" show-overflow-tooltip />
+      <el-table-column label="模板 / 供应商" min-width="170"><template #default="{ row }"><template v-if="isVendor(row)"><div>{{ row.template_name || '直接配置' }}</div><small>{{ row.supplier_name || '-' }}</small></template><span v-else>-</span></template></el-table-column>
       <el-table-column prop="status" label="状态" width="110">
         <template #default="{ row }">
           <el-tag :type="healthStatusType(row)" effect="plain">{{ healthStatusText(row) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="concurrency" label="并发" width="90" />
+      <el-table-column label="并发" width="90"><template #default="{ row }">{{ row.task_kind === 'vendor_billing_self_test' ? '-' : row.concurrency }}</template></el-table-column>
       <el-table-column prop="input_tokens" label="输入 Token" width="120" />
       <el-table-column label="成功率" width="110">
-        <template #default="{ row }">{{ percent(summaryResults(row).success_rate) }}</template>
+        <template #default="{ row }">{{ row.task_kind === 'vendor_billing_self_test' ? '-' : percent(summaryResults(row).success_rate) }}</template>
       </el-table-column>
       <el-table-column label="TPM" width="130">
-        <template #default="{ row }">{{ number(summaryResults(row).total_tpm) }}</template>
+        <template #default="{ row }">{{ row.task_kind === 'vendor_billing_self_test' ? '-' : number(summaryResults(row).total_tpm) }}</template>
       </el-table-column>
+      <el-table-column label="Case" width="100"><template #default="{ row }">{{ isVendor(row) ? `${row.case_success || 0}/${row.case_total || 0}` : '-' }}</template></el-table-column>
+      <el-table-column label="Token 结论" width="110"><template #default="{ row }"><el-tag v-if="isVendor(row)" :type="verificationType(row.token_status)" effect="plain">{{ verificationText(row.token_status) }}</el-tag><span v-else>-</span></template></el-table-column>
+      <el-table-column label="计费结论" width="110"><template #default="{ row }"><el-tag v-if="isVendor(row)" :type="verificationType(row.pricing_status)" effect="plain">{{ verificationText(row.pricing_status) }}</el-tag><span v-else>-</span></template></el-table-column>
       <el-table-column label="创建时间" min-width="170">
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
       </el-table-column>
@@ -65,21 +69,25 @@
           <span>{{ taskKindText(row) }}</span>
           <span>{{ protocolText(row.api_protocol) }}</span>
           <span>{{ row.model || '-' }}</span>
-          <span>{{ number(row.concurrency) }} 并发</span>
+          <span v-if="!isVendor(row)">{{ number(row.concurrency) }} 并发</span>
+          <span v-else>{{ row.template_name || '直接配置' }}</span>
         </div>
         <div class="mobile-card-metrics">
-          <div>
+          <div v-if="!isVendor(row)">
             <span>成功率</span>
             <strong>{{ percent(summaryResults(row).success_rate) }}</strong>
           </div>
-          <div>
+          <div v-if="!isVendor(row)">
             <span>TPM</span>
             <strong>{{ number(summaryResults(row).total_tpm) }}</strong>
           </div>
-          <div>
+          <div v-if="!isVendor(row)">
             <span>输入 Token</span>
             <strong>{{ number(row.input_tokens) }}</strong>
           </div>
+          <div v-if="isVendor(row)"><span>Case</span><strong>{{ row.case_success || 0 }}/{{ row.case_total || 0 }}</strong></div>
+          <div v-if="isVendor(row)"><span>Token</span><strong>{{ verificationText(row.token_status) }}</strong></div>
+          <div v-if="isVendor(row)"><span>计费</span><strong>{{ verificationText(row.pricing_status) }}</strong></div>
         </div>
         <div class="mobile-card-foot">
           <span>{{ formatTime(row.created_at) }}</span>
@@ -197,8 +205,16 @@ function isCacheDiagnostics(row) {
   return row.task_kind === 'cache_diagnostics'
 }
 
+function isVendor(row) { return row.task_kind === 'vendor_billing_self_test' }
+function isKimi(row) { return row.task_kind === 'kimi_suite' }
+function verificationText(value) { if (value === 'passed') return '通过'; if (value === 'token_anomaly' || value === 'failed') return '异常'; return '无法核验' }
+function verificationType(value) { if (value === 'passed') return 'success'; if (value === 'token_anomaly' || value === 'failed') return 'danger'; return 'warning' }
+
 function taskKindText(row) {
-  return isCacheDiagnostics(row) ? '缓存专项' : '负载测试'
+  if (isCacheDiagnostics(row)) return '缓存专项'
+  if (row.task_kind === 'vendor_billing_self_test') return '供应商计费自测'
+  if (row.task_kind === 'kimi_suite') return 'Kimi 测试集'
+  return '负载测试'
 }
 
 function isMobileSelected(row) {

@@ -125,7 +125,7 @@ def _custom_case_expected_metrics(
 def _summary_results(summary: dict[str, Any] | None) -> dict[str, Any]:
     if not summary:
         return {}
-    if summary.get("task_kind") == "cache_diagnostics":
+    if summary.get("task_kind") in {"cache_diagnostics", "kimi_suite"}:
         return {}
     if summary.get("matrix"):
         points = summary.get("results_matrix") or []
@@ -404,6 +404,19 @@ def _task_out(
     progress: dict[str, Any] | None = None,
 ) -> TestTaskOut:
     config = _config(task)
+    summary = _safe_load_summary(result)
+    vendor_details = summary.get("details", []) if isinstance(summary, dict) else []
+    vendor_comparisons = [item.get("comparison", {}) for item in vendor_details if isinstance(item, dict)]
+    is_vendor = config.get("task_kind") == "vendor_billing_self_test"
+    vendor_token_status = None
+    vendor_pricing_status = None
+    vendor_overall_status = None
+    if is_vendor:
+        token_values = {item.get("token_verification_status") for item in vendor_comparisons}
+        pricing_values = {item.get("pricing_verification_status") for item in vendor_comparisons}
+        vendor_token_status = "failed" if token_values & {"failed", "token_anomaly"} else ("passed" if token_values == {"passed"} else "unverifiable")
+        vendor_pricing_status = "failed" if "failed" in pricing_values else ("passed" if pricing_values == {"passed"} else "unverifiable")
+        vendor_overall_status = summary.get("status") if isinstance(summary, dict) else None
     return TestTaskOut(
         id=task.id,
         task_kind=config.get("task_kind", "load_test"),
@@ -433,8 +446,17 @@ def _task_out(
         completed_at=task.completed_at,
         expires_at=_expires_at(task),
         progress=progress,
-        summary=_safe_load_summary(result),
+        summary=summary,
         error_message=result.error_message if result else None,
+        template_id=config.get("template_id"),
+        template_name=config.get("template_name"),
+        supplier_name=config.get("supplier_name"),
+        case_total=len(vendor_details) if is_vendor else None,
+        case_success=sum(1 for item in vendor_comparisons if item.get("overall_status") == "passed") if is_vendor else None,
+        case_failed=sum(1 for item in vendor_comparisons if item.get("overall_status") in {"failed", "token_anomaly"}) if is_vendor else None,
+        token_status=vendor_token_status,
+        pricing_status=vendor_pricing_status,
+        overall_status=vendor_overall_status,
     )
 
 
@@ -843,17 +865,22 @@ async def get_report(
     task, result = item
     _ensure_task_access(task, user)
     config = json.loads(task.config_json)
-    summary = await asyncio.to_thread(
-        backfill_stream_latency_metrics,
-        _summary(result),
-        result.details_jsonl_path if result else None,
-        enable_stream=bool(config.get("enable_stream", task.enable_stream)),
-    ) if config.get("task_kind") != "cache_diagnostics" else _summary(result)
-    charts = build_chart_data(
-        summary,
-        result.details_jsonl_path if result else None,
-        charts_path=result.charts_path if result else None,
-    ) if config.get("task_kind") != "cache_diagnostics" else {}
+    task_kind = config.get("task_kind")
+    if task_kind in {"cache_diagnostics", "vendor_billing_self_test", "kimi_suite"}:
+        summary = _summary(result)
+        charts = {}
+    else:
+        summary = await asyncio.to_thread(
+            backfill_stream_latency_metrics,
+            _summary(result),
+            result.details_jsonl_path if result else None,
+            enable_stream=bool(config.get("enable_stream", task.enable_stream)),
+        )
+        charts = build_chart_data(
+            summary,
+            result.details_jsonl_path if result else None,
+            charts_path=result.charts_path if result else None,
+        )
     files = {
         "summary": result.summary_path if result else None,
         "details": result.details_jsonl_path if result else None,
@@ -951,7 +978,7 @@ async def download_report(
         summary = _safe_load_summary(result) or _summary_from_file(result)
         if not summary:
             raise HTTPException(status_code=404, detail="报告文件不存在")
-        if _config(task).get("task_kind") != "cache_diagnostics":
+        if _config(task).get("task_kind") not in {"cache_diagnostics", "vendor_billing_self_test", "kimi_suite"}:
             summary = await asyncio.to_thread(
                 backfill_stream_latency_metrics,
                 summary,

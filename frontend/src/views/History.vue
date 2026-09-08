@@ -110,7 +110,7 @@ import { ArrowDown, DataAnalysis, Delete, Download, RefreshLeft, Search } from '
 import EmptyState from '../components/EmptyState.vue'
 import HistoryTable from '../components/HistoryTable.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { deleteTest, deleteTests, resumeMatrixTest } from '../api/client'
+import { deleteTest, deleteTests, resumeMatrixTest, vendorBillingDownloadUrl } from '../api/client'
 import { useHistoryFilters } from '../composables/useHistoryFilters'
 import { openReportDownload } from '../composables/useReportDownload'
 import { useTestsStore } from '../stores/tests'
@@ -120,7 +120,7 @@ const store = useTestsStore()
 const { createdRange, reload, syncDateRange, resetFilters } = useHistoryFilters(store)
 const selectedRows = ref([])
 const bulkDeleting = ref(false)
-const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4 && selectedRows.value.every((row) => row.task_kind !== 'cache_diagnostics'))
+const canCompare = computed(() => selectedRows.value.length >= 2 && selectedRows.value.length <= 4 && selectedRows.value.every((row) => !['cache_diagnostics', 'vendor_billing_self_test', 'kimi_suite'].includes(row.task_kind)))
 const canExport = computed(() => selectedRows.value.length === 1)
 const canBulkDelete = computed(() => selectedRows.value.length > 0)
 const expiredCount = computed(() => store.items.filter((item) => isExpired(item)).length)
@@ -234,6 +234,10 @@ function handleSelectionChange(rows) {
 }
 
 function copyRerun(row) {
+  if (row.task_kind === 'vendor_billing_self_test') {
+    router.push('/tests/vendor-billing')
+    return
+  }
   if (row.task_kind === 'cache_diagnostics') {
     router.push('/tests/cache-diagnostics')
     return
@@ -260,11 +264,17 @@ function copyRerun(row) {
 }
 
 function openRun(row) {
-  router.push(row.task_kind === 'cache_diagnostics' ? `/tests/cache-diagnostics/${row.id}` : `/tests/${row.id}/run`)
+  if (row.task_kind === 'kimi_suite') return router.push(`/tests/kimi-suite/${row.id}`)
+  if (row.task_kind === 'cache_diagnostics') return router.push(`/tests/cache-diagnostics/${row.id}`)
+  if (row.task_kind === 'vendor_billing_self_test') return router.push(`/tests/vendor-billing/${row.id}/run`)
+  router.push(`/tests/${row.id}/run`)
 }
 
 function openReport(row) {
-  router.push(row.task_kind === 'cache_diagnostics' ? `/tests/cache-diagnostics/${row.id}` : `/tests/${row.id}/report`)
+  if (row.task_kind === 'kimi_suite') return router.push(`/tests/kimi-suite/${row.id}`)
+  if (row.task_kind === 'cache_diagnostics') return router.push(`/tests/cache-diagnostics/${row.id}`)
+  if (row.task_kind === 'vendor_billing_self_test') return router.push(`/tests/vendor-billing/${row.id}/result`)
+  router.push(`/tests/${row.id}/report`)
 }
 
 function goCompare() {
@@ -281,6 +291,11 @@ function exportSelectedReport(kind) {
     return
   }
   const row = selectedRows.value[0]
+  if (row.task_kind === 'vendor_billing_self_test') {
+    if (kind === 'matrix_csv') return ElMessage.warning('供应商计费自测不生成矩阵 CSV')
+    window.open(vendorBillingDownloadUrl(row.id, kind), '_blank')
+    return
+  }
   openReportDownload(router, row.id, kind)
 }
 

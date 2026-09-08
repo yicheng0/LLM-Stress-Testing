@@ -70,6 +70,14 @@ export function createCustomCaseBatch(payload) {
   })
 }
 
+export function createKimiSuite(payload) {
+  return request('/api/kimi-suite', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function getKimiSuite(id) {
+  return request(`/api/kimi-suite/${id}`)
+}
+
 export function createCacheDiagnostics(payload) {
   return request('/api/cache-diagnostics', {
     method: 'POST',
@@ -157,4 +165,44 @@ export function createProgressSocket(id) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = encodeURIComponent(getAuthToken())
   return new WebSocket(`${protocol}//${window.location.host}/ws/tests/${id}?token=${token}`)
+}
+
+export function getVendorBillingConfig() {
+  return request('/api/vendor-billing/config')
+}
+
+export function listVendorTemplates(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, value)
+  })
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request(`/api/vendor-templates${suffix}`)
+}
+
+export function getVendorTemplate(id) { return request(`/api/vendor-templates/${id}`) }
+export function createVendorTemplate(payload) { return request('/api/vendor-templates', { method: 'POST', body: JSON.stringify(payload) }) }
+export function updateVendorTemplate(id, payload) { return request(`/api/vendor-templates/${id}`, { method: 'PUT', body: JSON.stringify(payload) }) }
+export function setVendorTemplateEnabled(id, enabled) { return request(`/api/vendor-templates/${id}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' }) }
+export function createVendorBillingFromTemplate(payload) { return request('/api/vendor-billing/from-template', { method: 'POST', body: JSON.stringify(payload) }) }
+
+export function getVendorBillingPricing() {
+  return request('/api/vendor-billing/pricing')
+}
+
+export function createVendorBilling(payload) {
+  return request('/api/vendor-billing', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
+export function getVendorBilling(id) {
+  return request(`/api/vendor-billing/${id}`)
+}
+
+export function vendorBillingDownloadUrl(id, kind) {
+  const token = encodeURIComponent(getAuthToken())
+  const suffix = token ? `?token=${token}` : ''
+  return `${API_BASE}/api/vendor-billing/${id}/download/${kind}${suffix}`
 }

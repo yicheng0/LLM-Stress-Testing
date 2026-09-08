@@ -10,6 +10,9 @@ from backend.app.api.cache_diagnostics import router as cache_diagnostics_router
 from backend.app.api.docs import router as docs_router
 from backend.app.api.tests import router as tests_router
 from backend.app.api.websocket import router as websocket_router
+from backend.app.api.vendor_billing import router as vendor_billing_router
+from backend.app.api.kimi_suite import router as kimi_suite_router
+from backend.app.api.vendor_templates import router as vendor_templates_router
 from backend.app.core.progress import ProgressHub
 from backend.app.core.repository import Repository
 from backend.app.core.task_manager import TaskManager
@@ -39,6 +42,9 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(cache_diagnostics_router)
+app.include_router(vendor_billing_router)
+app.include_router(kimi_suite_router)
+app.include_router(vendor_templates_router)
 app.include_router(tests_router)
 app.include_router(docs_router)
 app.include_router(websocket_router)

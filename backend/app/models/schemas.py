@@ -146,6 +146,15 @@ class TestTaskOut(BaseModel):
     progress: dict[str, Any] | None = None
     summary: dict[str, Any] | None = None
     error_message: str | None = None
+    template_id: str | None = None
+    template_name: str | None = None
+    supplier_name: str | None = None
+    case_total: int | None = None
+    case_success: int | None = None
+    case_failed: int | None = None
+    token_status: str | None = None
+    pricing_status: str | None = None
+    overall_status: str | None = None
 
 
 class TestListOut(BaseModel):
@@ -220,11 +229,164 @@ class CustomCaseBatchOut(BaseModel):
     failures: list[CustomCaseBatchFailure]
 
 
+KimiCaseId = Literal[
+    "cache_repeat", "cache_multiturn", "cache_variable_suffix", "thinking",
+    "json_output", "stop", "sampling", "tool_call", "output_tokens",
+]
+
+
+class KimiSuiteCreate(BaseModel):
+    name: str = Field(default="Kimi 能力测试集", min_length=1, max_length=120)
+    api_protocol: Literal["openai"] = "openai"
+    base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
+    endpoint: str = Field(default="/v1/chat/completions", min_length=1)
+    api_key: str = Field(..., min_length=1)
+    model: str = Field(default="kimi-k3", min_length=1)
+    max_output_tokens: int = Field(default=128, ge=1, le=65536)
+    enable_stream: bool = True
+    timeout_sec: int = Field(default=120, ge=1)
+    connect_timeout_sec: int = Field(default=30, ge=1)
+    max_retries: int = Field(default=1, ge=0, le=10)
+    retry_backoff_base: float = Field(default=1.0, ge=0.0)
+    retry_backoff_max: float = Field(default=8.0, ge=0.0)
+    case_ids: list[KimiCaseId] = Field(default_factory=lambda: [
+        "cache_repeat", "cache_multiturn", "cache_variable_suffix", "thinking",
+        "json_output", "stop", "sampling", "tool_call", "output_tokens",
+    ], min_length=1, max_length=9)
+    task_kind: Literal["kimi_suite"] = "kimi_suite"
+
+    @model_validator(mode="after")
+    def normalize_case_ids(self) -> "KimiSuiteCreate":
+        self.case_ids = list(dict.fromkeys(self.case_ids))
+        return self
+
+
+class KimiSuiteRerunRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
+
+
 class EventOut(BaseModel):
     id: int
     level: str
     message: str
     created_at: datetime
+
+
+class VendorBillingCreate(BaseModel):
+    name: str = Field(default="供应商接入计费自测", min_length=1, max_length=120)
+    task_kind: Literal["vendor_billing_self_test"] = "vendor_billing_self_test"
+    supplier_name: str = Field(..., min_length=1, max_length=120)
+    api_protocol: Literal["openai", "anthropic", "gemini"] = "openai"
+    anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    base_url: str = Field(..., min_length=1)
+    endpoint: str = Field(default="/v1/chat/completions", min_length=1)
+    api_key: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    reference_base_url: str = Field(..., min_length=1)
+    reference_endpoint: str = Field(default="/v1/chat/completions", min_length=1)
+    reference_api_key: str = Field(..., min_length=1)
+    reference_model: str = Field(..., min_length=1)
+    reference_anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    input_token_lengths: list[int] = Field(default_factory=lambda: [128, 1024, 4096], min_length=1, max_length=6)
+    max_output_tokens: int = Field(default=128, ge=1, le=65536)
+    temperature: float | None = Field(default=0.0, ge=0.0, le=2.0)
+    timeout_sec: int = Field(default=120, ge=1, le=3600)
+    connect_timeout_sec: int = Field(default=30, ge=1, le=300)
+    enable_stream: bool = False
+    pricing_rule_id: str = Field(..., min_length=1)
+    token_abs_tolerance: int = Field(default=16, ge=0, le=10000)
+    token_relative_tolerance: float = Field(default=0.05, ge=0, le=1)
+    template_id: str | None = None
+    template_name: str | None = None
+    template_version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_lengths(self) -> "VendorBillingCreate":
+        if any(value <= 0 or value > 100000 for value in self.input_token_lengths):
+            raise ValueError("输入 Token 长度必须在 1 到 100000 之间")
+        if len(set(self.input_token_lengths)) != len(self.input_token_lengths):
+            raise ValueError("输入 Token 长度不能重复")
+        return self
+
+
+class VendorBillingConfigOut(BaseModel):
+    protocols: list[str]
+    default_input_token_lengths: list[int]
+    pricing_rules: list[dict[str, Any]]
+
+
+class VendorBillingOut(BaseModel):
+    test_id: str
+    task_kind: Literal["vendor_billing_self_test"] = "vendor_billing_self_test"
+    task_status: str
+    config: dict[str, Any]
+    progress: dict[str, Any] | None = None
+    summary: dict[str, Any] | None = None
+    events: list[EventOut] = Field(default_factory=list)
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class VendorTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    supplier_name: str = Field(..., min_length=1, max_length=120)
+    api_protocol: Literal["openai", "anthropic", "gemini"] = "openai"
+    anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    base_url: str = Field(..., min_length=1)
+    endpoint: str = Field(default="/v1/chat/completions", min_length=1)
+    model: str = Field(..., min_length=1)
+    reference_base_url: str = Field(..., min_length=1)
+    reference_endpoint: str = Field(default="/v1/chat/completions", min_length=1)
+    reference_model: str = Field(..., min_length=1)
+    reference_anthropic_version: str = Field(default="2023-06-01", min_length=1)
+    input_token_lengths: list[int] = Field(default_factory=lambda: [128, 1024, 4096], min_length=1, max_length=6)
+    max_output_tokens: int = Field(default=128, ge=1, le=65536)
+    temperature: float | None = Field(default=0.0, ge=0.0, le=2.0)
+    timeout_sec: int = Field(default=120, ge=1, le=3600)
+    connect_timeout_sec: int = Field(default=30, ge=1, le=300)
+    enable_stream: bool = False
+    cache_test_enabled: bool = False
+    pricing_rule_id: str = Field(..., min_length=1)
+    token_abs_tolerance: int = Field(default=16, ge=0, le=10000)
+    token_relative_tolerance: float = Field(default=0.05, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_template(self) -> "VendorTemplateCreate":
+        if any(value <= 0 or value > 100000 for value in self.input_token_lengths):
+            raise ValueError("输入 Token 长度必须在 1 到 100000 之间")
+        if len(set(self.input_token_lengths)) != len(self.input_token_lengths):
+            raise ValueError("输入 Token 长度不能重复")
+        return self
+
+
+class VendorTemplateUpdate(VendorTemplateCreate):
+    pass
+
+
+class VendorTemplateOut(BaseModel):
+    id: str
+    owner_username: str
+    owner_role: str
+    version: int
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    config: dict[str, Any]
+
+
+class VendorTemplateListOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[VendorTemplateOut]
+
+
+class VendorBillingFromTemplate(BaseModel):
+    template_id: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+    reference_api_key: str = Field(..., min_length=1)
+    name: str | None = Field(default=None, max_length=120)
 
 
 class CacheDiagnosticsOut(BaseModel):

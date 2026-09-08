@@ -111,6 +111,9 @@ const mobileNavOpen = ref(false)
 const navItems = [
   { index: '/tests/new', label: '新建测试', icon: Plus },
   { index: '/tests/cache-diagnostics', label: '缓存专项测试', icon: Coin },
+  { index: '/tests/kimi-suite', label: 'Kimi 测试集', icon: Coin },
+  { index: '/tests/vendor-billing', label: '供应商接入自测', icon: DocumentAdd },
+  { index: '/vendor-templates', label: '接入模板', icon: DocumentAdd },
   { index: '/tests/custom-case', label: '自定义 Case', icon: EditPen },
   { index: '/history', label: '历史记录', icon: Clock },
   { index: '/help/parameters', label: '参数说明', icon: Document },
@@ -133,6 +136,9 @@ const activePath = computed(() => {
   if (route.path.startsWith('/docs')) return '/docs/curl-to-openapi'
   if (route.path.startsWith('/tests/custom-case')) return '/tests/custom-case'
   if (route.path.startsWith('/tests/cache-diagnostics')) return '/tests/cache-diagnostics'
+  if (route.path.startsWith('/tests/kimi-suite')) return '/tests/kimi-suite'
+  if (route.path.startsWith('/tests/vendor-billing')) return '/tests/vendor-billing'
+  if (route.path.startsWith('/vendor-templates')) return '/vendor-templates'
   return '/tests/new'
 })
 const routeTitle = computed(() => route.meta?.title || {
@@ -140,6 +146,14 @@ const routeTitle = computed(() => route.meta?.title || {
   'custom-case': '自定义输入诊断',
   'cache-diagnostics': '缓存专项测试',
   'cache-diagnostics-result': '缓存专项结果',
+  'kimi-suite': 'Kimi 能力测试集',
+  'kimi-suite-result': 'Kimi 测试结果',
+  'vendor-billing': '供应商接入自测',
+  'vendor-billing-run': '供应商自测运行',
+  'vendor-billing-result': '供应商自测结果',
+  'vendor-templates': '接入模板',
+  'vendor-template-new': '新建接入模板',
+  'vendor-template-edit': '编辑接入模板',
   'run-test': '实时运行',
   'test-report': '报告详情',
   history: '历史记录',

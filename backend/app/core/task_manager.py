@@ -13,7 +13,9 @@ from backend.app.core.preflight import PreflightError, validate_api_credentials
 from backend.app.core.repository import Repository, _model_dump
 from backend.app.core.task_status import TaskStatus, stopped_final_status
 from backend.app.core.test_runner import WebLoadTestRunner
-from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate
+from backend.app.core.vendor_billing import VendorBillingRunner, redact_credentials_text
+from backend.app.models.schemas import CacheDiagnosticsCreate, TestCreate, VendorBillingCreate, KimiSuiteCreate
+from backend.app.core.kimi_suite import run_kimi_suite
 
 
 def _parse_csv_ints(value: str, field_name: str) -> list[int]:
@@ -64,6 +66,50 @@ class TaskManager:
 
     async def start_test(self, payload: TestCreate, owner: AuthUser) -> str:
         return await self._start_test(payload, owner=owner)
+
+    async def start_kimi_suite(self, payload: KimiSuiteCreate, owner: AuthUser) -> str:
+        if self.running_count() >= settings.max_running_tests:
+            raise ValueError(f"同时运行任务数不能超过 {settings.max_running_tests}")
+        task_id = str(uuid4())
+        self.repository.create_task(task_id, payload, owner)
+        self.repository.add_event(task_id, "info", "Kimi 能力测试集已创建")
+        stop_event = asyncio.Event(); self.stop_events[task_id] = stop_event
+        task = asyncio.create_task(self._run_kimi_suite(task_id, _model_dump(payload), stop_event)); self.tasks[task_id] = task
+        return task_id
+
+    async def _run_kimi_suite(self, task_id: str, config: dict[str, Any], stop_event: asyncio.Event) -> None:
+        async def progress(data): await self.progress_hub.publish_progress(task_id, data)
+        async def log(level, message):
+            self.repository.add_event(task_id, level, message); await self.progress_hub.publish_log(task_id, level, message)
+        try:
+            self.repository.update_task_status(task_id, TaskStatus.RUNNING.value, started_at=datetime.utcnow())
+            await self.progress_hub.publish_status(task_id, TaskStatus.RUNNING.value)
+            result = await run_kimi_suite(config, settings.results_dir / task_id, stop_event=stop_event, progress_callback=progress)
+            files = result["files"]
+            self.repository.save_result(task_id, summary=result["summary"], summary_path=files["summary_path"], details_jsonl_path=files["details_jsonl_path"], report_md_path=files["report_md_path"], report_html_path=files["report_html_path"], detail_count=files["detail_count"])
+            status = TaskStatus.CANCELLED.value if result["summary"]["status"] == "cancelled" else TaskStatus.COMPLETED.value
+            self.repository.update_task_status(task_id, status, completed_at=datetime.utcnow()); await self.progress_hub.publish_status(task_id, status)
+        except Exception as exc:
+            message = redact_credentials_text(str(exc), str(config.get("api_key") or ""))
+            self.repository.save_result(task_id, error_message=message); self.repository.update_task_status(task_id, TaskStatus.FAILED.value, completed_at=datetime.utcnow()); await log("error", message); await self.progress_hub.publish_status(task_id, TaskStatus.FAILED.value)
+        finally:
+            self.stop_events.pop(task_id, None); self.tasks.pop(task_id, None)
+
+    async def start_vendor_billing(self, payload: VendorBillingCreate, owner: AuthUser) -> str:
+        if self.running_count() >= settings.max_running_tests:
+            raise ValueError(f"同时运行任务数不能超过 {settings.max_running_tests}")
+        if not payload.input_token_lengths:
+            raise ValueError("至少需要一组输入长度")
+
+        task_id = str(uuid4())
+        self.repository.create_task(task_id, payload, owner)
+        self.repository.add_event(task_id, "info", "供应商接入计费自测任务已创建")
+        self.repository.add_event(task_id, "info", f"预计执行 {len(payload.input_token_lengths) * 2} 次正式请求；不执行额外预检")
+        stop_event = asyncio.Event()
+        self.stop_events[task_id] = stop_event
+        task = asyncio.create_task(self._run_vendor_billing(task_id, _model_dump(payload), stop_event))
+        self.tasks[task_id] = task
+        return task_id
 
     async def start_cache_diagnostics(self, payload: CacheDiagnosticsCreate, owner: AuthUser) -> str:
         if self.running_count() >= settings.max_running_tests:
@@ -162,6 +208,36 @@ class TaskManager:
         )
         self.tasks[task_id] = task
         return task_id
+
+    async def _run_vendor_billing(self, task_id: str, config: dict[str, Any], stop_event: asyncio.Event) -> None:
+        async def on_progress(data: dict[str, Any]) -> None:
+            await self.progress_hub.publish_progress(task_id, data)
+
+        async def on_log(level: str, message: str) -> None:
+            self.repository.add_event(task_id, level, message)
+            await self.progress_hub.publish_log(task_id, level, message)
+
+        try:
+            self.repository.update_task_status(task_id, TaskStatus.RUNNING.value, started_at=datetime.utcnow())
+            await self.progress_hub.publish_status(task_id, TaskStatus.RUNNING.value)
+            runner = VendorBillingRunner(config, settings.results_dir / task_id, progress_callback=on_progress, log_callback=on_log, stop_event=stop_event)
+            result = await runner.run()
+            files = result["files"]
+            self.repository.save_result(task_id, summary=result["summary"], summary_path=files["summary_path"], details_jsonl_path=files["details_jsonl_path"], report_md_path=files["report_md_path"], report_html_path=files["report_html_path"], detail_count=files.get("detail_count"))
+            final_status = TaskStatus.COMPLETED.value if result["summary"].get("status") != "cancelled" else TaskStatus.CANCELLED.value
+            self.repository.update_task_status(task_id, final_status, completed_at=datetime.utcnow())
+            await self.progress_hub.publish_status(task_id, final_status)
+        except Exception as exc:
+            message = redact_credentials_text(str(exc), str(config.get("api_key") or ""), str(config.get("reference_api_key") or ""))[:1000]
+            self.repository.save_result(task_id, error_message=message)
+            self.repository.update_task_status(task_id, TaskStatus.FAILED.value, completed_at=datetime.utcnow())
+            self.repository.add_event(task_id, "error", message)
+            await self.progress_hub.publish_status(task_id, TaskStatus.FAILED.value)
+            await self.progress_hub.publish_log(task_id, "error", message)
+        finally:
+            self.stop_events.pop(task_id, None)
+            self.stop_reasons.pop(task_id, None)
+            self.tasks.pop(task_id, None)
 
     async def stop_test(self, task_id: str) -> bool:
         stop_event = self.stop_events.get(task_id)
