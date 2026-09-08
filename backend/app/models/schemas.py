@@ -231,13 +231,14 @@ class CustomCaseBatchOut(BaseModel):
 
 KimiCaseId = Literal[
     "cache_repeat", "cache_multiturn", "cache_variable_suffix", "thinking",
-    "json_output", "stop", "sampling", "tool_call", "output_tokens",
+    "json_output", "stop", "sampling", "tool_call", "output_tokens", "video_parse",
+    "prompt_token_injection",
 ]
 
 
 class KimiSuiteCreate(BaseModel):
     name: str = Field(default="Kimi 能力测试集", min_length=1, max_length=120)
-    api_protocol: Literal["openai"] = "openai"
+    api_protocol: Literal["openai", "anthropic", "gemini"] = "openai"
     base_url: str = Field(default="https://api.wenwen-ai.com", min_length=1)
     endpoint: str = Field(default="/v1/chat/completions", min_length=1)
     api_key: str = Field(..., min_length=1)
@@ -252,12 +253,19 @@ class KimiSuiteCreate(BaseModel):
     case_ids: list[KimiCaseId] = Field(default_factory=lambda: [
         "cache_repeat", "cache_multiturn", "cache_variable_suffix", "thinking",
         "json_output", "stop", "sampling", "tool_call", "output_tokens",
-    ], min_length=1, max_length=9)
+        "prompt_token_injection",
+    ], min_length=1, max_length=11)
+    video_data_url: str | None = Field(default=None, max_length=20_000_000)
+    video_mime_type: Literal["video/mp4", "video/webm", "video/quicktime"] | None = None
     task_kind: Literal["kimi_suite"] = "kimi_suite"
 
     @model_validator(mode="after")
     def normalize_case_ids(self) -> "KimiSuiteCreate":
         self.case_ids = list(dict.fromkeys(self.case_ids))
+        if "video_parse" in self.case_ids and not self.video_data_url:
+            raise ValueError("选择视频解析 Case 时必须上传视频")
+        if self.video_data_url and not self.video_data_url.startswith("data:video/"):
+            raise ValueError("视频必须使用 data:video/* 格式提交")
         return self
 
 

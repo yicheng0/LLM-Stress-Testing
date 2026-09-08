@@ -8,11 +8,12 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 import aiohttp
-from loadtest.protocols import extract_token_usage
+from loadtest.protocols import build_headers, build_url, extract_response_text
 
 KIMI_CASE_IDS = (
     "cache_repeat", "cache_multiturn", "cache_variable_suffix", "thinking",
-    "json_output", "stop", "sampling", "tool_call", "output_tokens",
+    "json_output", "stop", "sampling", "tool_call", "output_tokens", "video_parse",
+    "prompt_token_injection",
 )
 
 @dataclass(frozen=True)
@@ -53,7 +54,114 @@ CASE_CATALOG = (
     )),
     Case("tool_call", "工具调用-多场景", "验证工具名称和参数。", (_s("weather", "天气工具", "查询北京天气。", "tool", thinking={"type": "disabled"}, tools=[{"type":"function","function":{"name":"get_weather","description":"获取天气","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}], tool_choice={"type":"function","function":{"name":"get_weather"}}),)),
     Case("output_tokens", "输出tokens校验-多场景", "验证 max_tokens 上限和 usage。", tuple(_s(str(n), f"上限 {n}", "请详细解释人工智能。", "output_tokens", max_tokens=n) for n in (5, 20, 80))),
+    Case("video_parse", "视频解析", "发送视频并验证模型能够返回视频内容摘要。", (_s("video", "视频理解", "请描述这个视频的主要内容，并指出关键动作。", "video_parse"),), "multimodal"),
+    Case("prompt_token_injection", "Prompt Token 注入检测", "对比可见请求估算值与上游输入 Token usage。", (_s("prompt_tokens", "输入 Token 对比", "请只回复 TOKEN_CHECK_OK。", "prompt_tokens"),)),
 )
+
+
+def estimate_prompt_tokens(payload: dict[str, Any]) -> tuple[int | None, str]:
+    """Estimate visible prompt tokens without persisting the prompt itself."""
+    visible: list[str] = []
+
+    def collect(value: Any, key: str = "") -> None:
+        if key in {"model", "max_tokens", "maxOutputTokens", "stream"}:
+            return
+        if isinstance(value, str):
+            visible.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, dict):
+            for child_key, item in value.items():
+                collect(item, child_key)
+
+    collect(payload)
+    text = "\n".join(visible)
+    if not text:
+        return None, "unavailable"
+    try:
+        import tiktoken
+        return len(tiktoken.get_encoding("cl100k_base").encode(text)) + 8, "tiktoken_cl100k_plus_message_overhead"
+    except Exception:
+        return max(1, (len(text) + 3) // 4) + 8, "char_fallback_plus_message_overhead"
+
+
+def extract_input_tokens(response_or_usage: dict[str, Any] | None) -> int | None:
+    if not isinstance(response_or_usage, dict):
+        return None
+    usage = response_or_usage.get("usage") if isinstance(response_or_usage.get("usage"), dict) else response_or_usage
+    if isinstance(response_or_usage.get("usageMetadata"), dict):
+        usage = response_or_usage["usageMetadata"]
+    for key in ("prompt_tokens", "input_tokens", "promptTokenCount"):
+        if key in usage and usage[key] is not None:
+            try:
+                return int(usage[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def assert_prompt_token_evidence(local_tokens: int | None, upstream_tokens: int | None, *, supported: bool = True, tolerance_tokens: int = 16, tolerance_ratio: float = 0.25) -> dict[str, Any]:
+    evidence = {"local_prompt_tokens": local_tokens, "upstream_input_tokens": upstream_tokens, "delta_tokens": None, "delta_ratio": None, "tolerance_tokens": tolerance_tokens, "tolerance_ratio": tolerance_ratio}
+    if not supported:
+        return {**evidence, "status": "unsupported", "detail": "当前协议未提供可比较的输入 Token 字段"}
+    if local_tokens is None:
+        return {**evidence, "status": "unverifiable", "detail": "本地 Prompt Token 估算不可用"}
+    if upstream_tokens is None:
+        return {**evidence, "status": "unverifiable", "detail": "上游响应缺少输入 Token usage"}
+    delta = upstream_tokens - local_tokens
+    ratio = delta / max(local_tokens, 1)
+    evidence.update({"delta_tokens": delta, "delta_ratio": ratio})
+    suspicious = delta > tolerance_tokens and ratio > tolerance_ratio
+    return {**evidence, "status": "suspected_injection" if suspicious else "passed", "detail": f"本地估算 {local_tokens}，上游 {upstream_tokens}，差值 {delta}（{ratio:.1%}）"}
+
+
+def build_protocol_request(config: dict[str, Any], scenario: Scenario) -> dict[str, Any]:
+    protocol = str(config.get("api_protocol") or "openai")
+    model = str(config.get("model") or "kimi-k3")
+    stream = bool(config.get("enable_stream", True))
+    max_tokens = int(config.get("max_output_tokens", 128))
+    messages = [{"role": "system", "content": "You are a benchmarking target."}]
+    if scenario.id == "video":
+        messages.append({"role": "user", "content": [{"type": "text", "text": scenario.prompt}, {"type": "video_url", "video_url": {"url": str(config.get("video_data_url") or "")}}]})
+    elif scenario.messages:
+        messages.extend({"role": role, "content": content} for role, content in scenario.messages)
+    else:
+        messages.append({"role": "user", "content": scenario.prompt})
+    if protocol == "gemini":
+        payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": [{"text": scenario.prompt}]}],
+            "generationConfig": {"maxOutputTokens": max_tokens},
+        }
+        if scenario.overrides.get("temperature") is not None:
+            payload["generationConfig"]["temperature"] = scenario.overrides["temperature"]
+    elif protocol == "anthropic":
+        payload = {"model": model, "system": messages[0]["content"], "messages": messages[1:], "max_tokens": max_tokens, "stream": stream}
+        if scenario.overrides.get("temperature") is not None:
+            payload["temperature"] = scenario.overrides["temperature"]
+    else:
+        payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": stream}
+    payload.update(scenario.overrides)
+    if protocol == "gemini":
+        payload.pop("model", None)
+        payload.pop("stream", None)
+        payload.pop("max_tokens", None)
+    return {
+        "url": build_url(str(config.get("base_url") or ""), str(config.get("endpoint") or ""), protocol, model=model, enable_stream=stream),
+        "headers": build_headers(protocol, api_key=str(config.get("api_key") or "")),
+        "payload": payload,
+    }
+
+
+def build_progress_snapshot(cases: list[dict[str, Any]], *, current_case: str | None = None, current_case_id: str | None = None, current_scenario: str | None = None, total_cases: int | None = None) -> dict[str, Any]:
+    return {
+        "current_case": current_case,
+        "current_case_id": current_case_id,
+        "current_scenario": current_scenario,
+        "completed_cases": sum(1 for item in cases if item.get("status") not in {"pending", "running"}),
+        "total_cases": total_cases if total_cases is not None else len(cases),
+        "cases": cases,
+    }
 
 def validate_case_ids(case_ids: list[str] | tuple[str, ...]) -> list[str]:
     result = list(dict.fromkeys(case_ids))
@@ -80,6 +188,8 @@ def assert_response(kind: str, evidence: dict[str, Any], scenario: Scenario) -> 
         return {"status": "request_failed", "detail": evidence["error"]}
     if evidence.get("unsupported"):
         return {"status": "unsupported", "detail": evidence.get("unsupported")}
+    if kind == "video_parse":
+        return {"status": "passed" if len(content.strip()) >= 4 else "unverifiable", "detail": "视频解析返回了文本摘要"}
     if kind == "json":
         try:
             value = json.loads(content)
@@ -128,23 +238,25 @@ async def run_kimi_suite(config: dict[str, Any], output_dir: Path, *, stop_event
     cases = []
     started = time.perf_counter()
     timeout = aiohttp.ClientTimeout(total=float(config.get("timeout_sec", 120)))
-    url = str(config.get("base_url", "")).rstrip("/") + str(config.get("endpoint", "/v1/chat/completions"))
-    headers = {"Authorization": f"Bearer {config.get('api_key','')}", "Content-Type": "application/json"}
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        live_cases: list[dict[str, Any]] = [{"case_id": item.id, "case_name": item.name, "status": "pending", "elapsed_sec": 0, "scenarios": [], "manual_rerun_count": 0} for item in CASE_CATALOG if item.id in selected]
         for index, case_id in enumerate(selected, 1):
             case = next(item for item in CASE_CATALOG if item.id == case_id)
+            live_case = next(item for item in live_cases if item["case_id"] == case.id)
+            live_case["status"] = "running"
             scenario_results = []
             for scenario in case.scenarios:
                 if stop_event and stop_event.is_set():
                     break
                 if progress_callback:
-                    value = {"current_case": case.name, "current_case_id": case.id, "current_scenario": scenario.name, "completed_cases": index - 1, "total_cases": len(selected)}
+                    value = build_progress_snapshot(live_cases, current_case=case.name, current_case_id=case.id, current_scenario=scenario.name, total_cases=len(selected))
                     result = progress_callback(value)
                     if asyncio.iscoroutine(result): await result
-                payload = build_payload(config.get("model", "kimi-k3"), scenario, stream=False, max_output_tokens=int(config.get("max_output_tokens", 128)))
+                request = build_protocol_request({**config, "enable_stream": False}, scenario)
+                payload = request["payload"]
                 t0 = time.perf_counter(); evidence = {"content": "", "usage": {}}
                 try:
-                    async with session.post(url, headers=headers, json=payload) as response:
+                    async with session.post(request["url"], headers=request["headers"], json=payload) as response:
                         raw = await response.text(); latency = time.perf_counter() - t0
                         data = json.loads(raw) if raw else {}
                         if response.status >= 400:
@@ -152,20 +264,37 @@ async def run_kimi_suite(config: dict[str, Any], output_dir: Path, *, stop_event
                         else:
                             choice = (data.get("choices") or [{}])[0]
                             message = choice.get("message") or {}
-                            evidence.update({"content": message.get("content") or "", "thinking": message.get("reasoning_content") or message.get("thinking") or "", "finish_reason": choice.get("finish_reason"), "usage": data.get("usage") or {}})
+                            evidence.update({"content": extract_response_text(data), "thinking": message.get("reasoning_content") or message.get("thinking") or "", "finish_reason": choice.get("finish_reason"), "usage": data.get("usage") or data.get("usageMetadata") or {}})
                             calls = message.get("tool_calls") or []
                             evidence["tool_calls"] = [{"name": ((c.get("function") or {}).get("name")), "arguments": ((c.get("function") or {}).get("arguments"))} for c in calls]
-                        verdict = classify_cache_usage(evidence.get("usage"), request_failed=bool(evidence.get("error"))) if case.kind == "cache" else assert_response(scenario.assertion, evidence, scenario)
+                        if case.kind == "cache":
+                            verdict = classify_cache_usage(evidence.get("usage"), request_failed=bool(evidence.get("error")))
+                        elif scenario.assertion == "prompt_tokens":
+                            local_tokens, estimation_method = estimate_prompt_tokens(payload)
+                            upstream_tokens = extract_input_tokens(data) if not evidence.get("error") else None
+                            verdict = assert_prompt_token_evidence(local_tokens, upstream_tokens, supported=True)
+                            verdict["estimation_method"] = estimation_method
+                            evidence["token_evidence"] = verdict
+                        else:
+                            verdict = assert_response(scenario.assertion, evidence, scenario)
                         if isinstance(verdict, str): verdict = {"status": verdict, "detail": "缓存 usage 判定"}
                         status = verdict["status"]
                 except Exception as exc:
                     latency = time.perf_counter() - t0; evidence["error"] = str(exc); verdict = {"status": "request_failed", "detail": str(exc)}; status = "request_failed"
-                scenario_results.append({"scenario_id": scenario.id, "scenario_name": scenario.name, "status": status, "latency_sec": latency, "request": {k:v for k,v in payload.items() if k != "messages"}, "evidence": {**evidence, "usage": evidence.get("usage") or {}}, "assertion": verdict})
+                request_summary = {k: v for k, v in payload.items() if k not in {"messages", "contents", "system", "input"}}
+                scenario_results.append({"scenario_id": scenario.id, "scenario_name": scenario.name, "status": status, "latency_sec": latency, "request": request_summary, "evidence": {**evidence, "usage": evidence.get("usage") or {}}, "assertion": verdict})
+                live_case["scenarios"] = scenario_results
+                live_case["elapsed_sec"] = sum(item["latency_sec"] for item in scenario_results)
+                if progress_callback:
+                    await progress_callback(build_progress_snapshot(live_cases, current_case=case.name, current_case_id=case.id, current_scenario=scenario.name, total_cases=len(selected)))
             statuses = [item["status"] for item in scenario_results]
-            case_status = "failed" if any(x in {"request_failed", "assertion_failed"} for x in statuses) else ("unsupported" if "unsupported" in statuses else ("unverifiable" if "unverifiable" in statuses else "passed"))
+            case_status = "failed" if any(x in {"request_failed", "assertion_failed"} for x in statuses) else ("suspected_injection" if "suspected_injection" in statuses else ("unsupported" if "unsupported" in statuses else ("unverifiable" if "unverifiable" in statuses else "passed")))
             cases.append({"case_id": case.id, "case_name": case.name, "description": case.description, "status": case_status, "scenarios": scenario_results, "manual_rerun_count": 0, "elapsed_sec": sum(item["latency_sec"] for item in scenario_results)})
+            live_case.update({"status": case_status, "scenarios": scenario_results, "elapsed_sec": sum(item["latency_sec"] for item in scenario_results)})
+            if progress_callback:
+                await progress_callback(build_progress_snapshot(live_cases, current_case=None, current_case_id=None, current_scenario=None, total_cases=len(selected)))
     counts = {key: sum(1 for case in cases if case["status"] == key) for key in ("passed", "failed", "unsupported", "unverifiable")}
-    summary = {"task_kind": "kimi_suite", "status": "cancelled" if stop_event and stop_event.is_set() else "completed", "config": {k:v for k,v in config.items() if k != "api_key"}, "results": {"total_cases": len(cases), **counts, "elapsed_sec": time.perf_counter() - started}, "cases": cases}
+    summary = {"task_kind": "kimi_suite", "status": "cancelled" if stop_event and stop_event.is_set() else "completed", "config": {k:v for k,v in config.items() if k not in {"api_key", "video_data_url"}}, "results": {"total_cases": len(cases), **counts, "elapsed_sec": time.perf_counter() - started}, "cases": cases}
     (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     with (output_dir / "details.jsonl").open("w", encoding="utf-8") as fh:
         for case in cases:
